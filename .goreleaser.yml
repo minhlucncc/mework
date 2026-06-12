@@ -1,0 +1,47 @@
+# goreleaser config for the mello CLI.
+# NOTE: the GitHub owner/repo and module path are not yet finalized (module is
+# currently the bare `mework`). Update `project_name`, the module path, and add
+# a `release:` block with the real GitHub repo before publishing. Until then,
+# `goreleaser build --snapshot --clean` cross-compiles locally without publish.
+version: 2
+
+project_name: mello
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mello
+    main: ./cmd/mello
+    binary: mello
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: versioned
+    name_template: "mello-cli-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"

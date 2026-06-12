@@ -27,6 +27,9 @@ func registerCommands() {
 		c.GroupID = groupCore
 		rootCmd.AddCommand(c)
 	}
+
+	versionCmd.GroupID = groupAdditional
+	rootCmd.AddCommand(versionCmd)
 }
 
 var configCmd = &cobra.Command{
@@ -61,9 +64,9 @@ func init() {
 
 // configKeys is the whitelist of settable config keys.
 var configKeys = map[string]func(*cli.Config, string){
-	"base_url":              func(c *cli.Config, v string) { c.BaseURL = v },
-	"workspace_id":          func(c *cli.Config, v string) { c.WorkspaceID = v },
-	"mcp_url":               func(c *cli.Config, v string) { c.MCPURL = v },
+	"base_url":               func(c *cli.Config, v string) { c.BaseURL = v },
+	"workspace_id":           func(c *cli.Config, v string) { c.WorkspaceID = v },
+	"mcp_url":                func(c *cli.Config, v string) { c.MCPURL = v },
 	"daemon.trigger_keyword": func(c *cli.Config, v string) { c.Daemon.TriggerKeyword = v },
 	"daemon.done_column_id":  func(c *cli.Config, v string) { c.Daemon.DoneColumnID = v },
 }

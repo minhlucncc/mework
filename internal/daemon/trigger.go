@@ -18,6 +18,7 @@ type triggerMatch struct {
 //   - it was NOT authored by the daemon itself (selfUserID) — prevents the
 //     daemon's own start/done comments from re-triggering an infinite loop,
 //   - it has not already been handled (caller checks state).
+//
 // Ordering is by created_at so older triggers run first; comment ids may be
 // UUIDs so we never rely on id ordering.
 func findTriggers(comments []mello.Comment, keyword, selfUserID string) []triggerMatch {

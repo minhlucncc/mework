@@ -5,38 +5,38 @@ import "time"
 // Ticket is a card on a board. AssigneeID, CreatedAt and the comment list
 // drive the daemon's trigger logic.
 type Ticket struct {
-	ID                  string        `json:"id"`
-	TicketNumber        int           `json:"ticket_number"`
-	TicketCode          string        `json:"ticket_code"`
-	ColumnID            string        `json:"column_id"`
-	Title               string        `json:"title"`
-	Description         string        `json:"description"`
-	DescriptionHTML     string        `json:"description_html"`
-	Position            int           `json:"position"`
-	BoardCode           string        `json:"board_code,omitempty"`
-	AssigneeID          string        `json:"assignee_id,omitempty"`
-	StartDate           *time.Time    `json:"start_date,omitempty"`
-	EndDate             *time.Time    `json:"end_date,omitempty"`
-	CreatedAt           *time.Time    `json:"created_at,omitempty"`
-	UpdatedAt           *time.Time    `json:"updated_at,omitempty"`
-	Labels              []Label       `json:"labels,omitempty"`
-	Members             []TicketMember `json:"members,omitempty"`
-	CommentCount        int           `json:"comment_count,omitempty"`
-	AttachmentCount     int           `json:"attachment_count,omitempty"`
-	ChecklistItemCount  int           `json:"checklist_item_count,omitempty"`
-	ChecklistCheckedCount int         `json:"checklist_checked_count,omitempty"`
+	ID                    string         `json:"id"`
+	TicketNumber          int            `json:"ticket_number"`
+	TicketCode            string         `json:"ticket_code"`
+	ColumnID              string         `json:"column_id"`
+	Title                 string         `json:"title"`
+	Description           string         `json:"description"`
+	DescriptionHTML       string         `json:"description_html"`
+	Position              int            `json:"position"`
+	BoardCode             string         `json:"board_code,omitempty"`
+	AssigneeID            string         `json:"assignee_id,omitempty"`
+	StartDate             *time.Time     `json:"start_date,omitempty"`
+	EndDate               *time.Time     `json:"end_date,omitempty"`
+	CreatedAt             *time.Time     `json:"created_at,omitempty"`
+	UpdatedAt             *time.Time     `json:"updated_at,omitempty"`
+	Labels                []Label        `json:"labels,omitempty"`
+	Members               []TicketMember `json:"members,omitempty"`
+	CommentCount          int            `json:"comment_count,omitempty"`
+	AttachmentCount       int            `json:"attachment_count,omitempty"`
+	ChecklistItemCount    int            `json:"checklist_item_count,omitempty"`
+	ChecklistCheckedCount int            `json:"checklist_checked_count,omitempty"`
 }
 
 // TicketDetail extends Ticket with nested collections returned by GET /tickets/{id}.
 type TicketDetail struct {
 	Ticket
-	BoardID     string           `json:"board_id,omitempty"`
-	WorkspaceID string           `json:"workspace_id,omitempty"`
-	ColumnName  string           `json:"column_name,omitempty"`
-	Comments    []Comment        `json:"comments,omitempty"`
-	Activities  []HistoryEntry   `json:"activities,omitempty"`
-	Checklists  []Checklist      `json:"checklists,omitempty"`
-	Attachments []Attachment     `json:"attachments,omitempty"`
+	BoardID     string         `json:"board_id,omitempty"`
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	ColumnName  string         `json:"column_name,omitempty"`
+	Comments    []Comment      `json:"comments,omitempty"`
+	Activities  []HistoryEntry `json:"activities,omitempty"`
+	Checklists  []Checklist    `json:"checklists,omitempty"`
+	Attachments []Attachment   `json:"attachments,omitempty"`
 }
 
 // Comment is a message on a ticket. UserID/Author identify the writer so the
@@ -54,14 +54,14 @@ type Comment struct {
 
 // HistoryEntry is an activity log record on a ticket.
 type HistoryEntry struct {
-	ID          string                 `json:"id"`
-	TicketID    string                 `json:"ticket_id"`
-	WorkspaceID string                 `json:"workspace_id"`
-	Action      string                 `json:"action"`
-	UserID      string                 `json:"user_id,omitempty"`
-	Payload     map[string]any         `json:"payload,omitempty"`
-	CreatedAt   *time.Time             `json:"created_at,omitempty"`
-	Author      *User                  `json:"author,omitempty"`
+	ID          string         `json:"id"`
+	TicketID    string         `json:"ticket_id"`
+	WorkspaceID string         `json:"workspace_id"`
+	Action      string         `json:"action"`
+	UserID      string         `json:"user_id,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+	CreatedAt   *time.Time     `json:"created_at,omitempty"`
+	Author      *User          `json:"author,omitempty"`
 }
 
 // Checklist groups checklist items on a ticket.

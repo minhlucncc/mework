@@ -35,12 +35,12 @@ func TestRateLimitedDetection(t *testing.T) {
 
 func TestExitCodeMapping(t *testing.T) {
 	cases := map[error]int{
-		nil:                                     ExitOK,
-		&APIError{StatusCode: 401}:              ExitAuth,
-		&APIError{StatusCode: 403}:              ExitAuth,
-		&APIError{StatusCode: 404}:              ExitNotFound,
-		&APIError{StatusCode: 422}:              ExitValidation,
-		&APIError{StatusCode: 500}:              ExitGeneric,
+		nil:                        ExitOK,
+		&APIError{StatusCode: 401}: ExitAuth,
+		&APIError{StatusCode: 403}: ExitAuth,
+		&APIError{StatusCode: 404}: ExitNotFound,
+		&APIError{StatusCode: 422}: ExitValidation,
+		&APIError{StatusCode: 500}: ExitGeneric,
 	}
 	for err, want := range cases {
 		if got := ExitCode(err); got != want {

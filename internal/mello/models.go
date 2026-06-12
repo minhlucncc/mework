@@ -68,13 +68,13 @@ type Board struct {
 
 // Column is an ordered lane on a board containing tickets.
 type Column struct {
-	ID         string     `json:"id"`
-	BoardID    string     `json:"board_id"`
-	Name       string     `json:"name"`
-	Position   int        `json:"position"`
-	TicketCount int       `json:"ticket_count,omitempty"`
-	Color      string     `json:"color,omitempty"`
-	CreatedAt  *time.Time `json:"created_at,omitempty"`
-	ArchivedAt *time.Time `json:"archived_at,omitempty"`
-	Tickets    []Ticket   `json:"tickets,omitempty"`
+	ID          string     `json:"id"`
+	BoardID     string     `json:"board_id"`
+	Name        string     `json:"name"`
+	Position    int        `json:"position"`
+	TicketCount int        `json:"ticket_count,omitempty"`
+	Color       string     `json:"color,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	ArchivedAt  *time.Time `json:"archived_at,omitempty"`
+	Tickets     []Ticket   `json:"tickets,omitempty"`
 }
