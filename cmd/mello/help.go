@@ -14,6 +14,9 @@ import (
 func registerCommands() {
 	configCmd.GroupID = groupAdditional
 	rootCmd.AddCommand(configCmd)
+
+	daemonCmd.GroupID = groupRuntime
+	rootCmd.AddCommand(daemonCmd)
 }
 
 var configCmd = &cobra.Command{
