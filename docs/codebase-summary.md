@@ -36,7 +36,7 @@ internal/server/      HTTP server, configuration, router, health handlers
 internal/store/       database connection pool and goose migrations
   db.go               pgxpool wrapper + stdlib sql database connector
   migrate.go          embedded goose migrations up/down runner
-  migrations/         SQL migrations (accounts, account_boards, runtimes, profiles, jobs)
+  migrations/         SQL migrations (accounts, provider_connections, account_identities, watched_containers, runtimes, profiles, jobs)
 
 internal/mello/       REST client + entity models
   models.go           User, Workspace, Board, Column, …
@@ -69,9 +69,9 @@ Write-back (legacy daemon): daemon → `internal/mcp` → hosted Mello MCP.
 Trigger state (legacy daemon): `internal/daemon/state.go` → `~/.mework[/profiles/<p>]/state.json`.
 
 Central Server flow:
-1. Mello Comment Webhook → POST `/webhooks/mello` → server verifies signature → enqueues job (durable `jobs` table).
+1. Provider Webhook → POST `/webhooks/{provider}` → server verifies signature, resolves target account using `watched_containers` or `account_identities`, and enqueues job (durable `jobs` table).
 2. Daemon long-poll → GET `/v1/jobs/next` → server claims job with advisory lock + lease.
-3. Daemon runs agent (stdin prompt) → posts updates directly to Mezon → ACK/report status.
+3. Daemon runs agent (stdin prompt) → posts updates directly to Mezon / target platform → ACK/report status.
 
 ## Key invariants
 
@@ -91,5 +91,5 @@ stdin/exit handling, pid lifecycle + health-port determinism.
 
 Integration tests cover:
 - Server: Config env loader validation, `/healthz` DB ping status codes.
-- Store: Embedded SQL migration run (up/down rollback) verifying core tables (accounts, account_boards, runtimes, profiles, jobs) and their respective unique/composite/partial indexes against a real Postgres container database.
+- Store: Embedded SQL migration run (up/down rollback) verifying core tables (accounts, provider_connections, account_identities, watched_containers, runtimes, profiles, jobs) and their respective unique/composite/partial indexes against a real Postgres container database.
 

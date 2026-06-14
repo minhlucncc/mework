@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -38,30 +39,84 @@ func TestMigrations(t *testing.T) {
 		t.Fatalf("failed to run migrations up: %v", err)
 	}
 
-	// 3. Verify tables exist (including goose_db_version)
+	// 3. Verify tables exist
 	assertTableExists(t, ctx, conn, "accounts")
-	assertTableExists(t, ctx, conn, "account_boards")
+	assertTableExists(t, ctx, conn, "provider_connections")
+	assertTableExists(t, ctx, conn, "account_identities")
+	assertTableExists(t, ctx, conn, "watched_containers")
 	assertTableExists(t, ctx, conn, "runtimes")
 	assertTableExists(t, ctx, conn, "profiles")
 	assertTableExists(t, ctx, conn, "jobs")
 
-	// Verify columns on account_boards
-	assertColumnExists(t, ctx, conn, "account_boards", "account_id")
-	assertColumnExists(t, ctx, conn, "account_boards", "mello_board_id")
+	// Verify dropped tables and columns
+	assertTableDoesNotExist(t, ctx, conn, "account_boards")
+	assertColumnDoesNotExist(t, ctx, conn, "accounts", "mello_user_id")
 
-	// Verify schema additions on runtimes
+	// Verify columns on provider_connections
+	assertColumnExists(t, ctx, conn, "provider_connections", "id")
+	assertColumnExists(t, ctx, conn, "provider_connections", "account_id")
+	assertColumnExists(t, ctx, conn, "provider_connections", "provider_code")
+	assertColumnExists(t, ctx, conn, "provider_connections", "webhook_secret")
+	assertColumnExists(t, ctx, conn, "provider_connections", "mcp_url")
+	assertColumnExists(t, ctx, conn, "provider_connections", "mcp_auth_enc")
+	assertColumnExists(t, ctx, conn, "provider_connections", "config")
+	assertColumnExists(t, ctx, conn, "provider_connections", "created_at")
+
+	// Verify columns on account_identities
+	assertColumnExists(t, ctx, conn, "account_identities", "account_id")
+	assertColumnExists(t, ctx, conn, "account_identities", "provider_code")
+	assertColumnExists(t, ctx, conn, "account_identities", "external_user_id")
+
+	// Verify columns on watched_containers
+	assertColumnExists(t, ctx, conn, "watched_containers", "account_id")
+	assertColumnExists(t, ctx, conn, "watched_containers", "provider_code")
+	assertColumnExists(t, ctx, conn, "watched_containers", "external_container_id")
+
+	// Verify schema on runtimes
 	assertColumnExists(t, ctx, conn, "runtimes", "token_lookup")
 
-	// Verify schema additions on jobs
-	assertColumnExists(t, ctx, conn, "jobs", "attempts")
-	assertColumnExists(t, ctx, conn, "jobs", "last_error")
-	assertColumnExists(t, ctx, conn, "jobs", "ticket_title")
-	assertColumnExists(t, ctx, conn, "jobs", "ticket_description")
-	assertColumnExists(t, ctx, conn, "jobs", "profile_body_snapshot")
+	// Verify schema on profiles
+	assertColumnExists(t, ctx, conn, "profiles", "harness")
+	assertColumnExists(t, ctx, conn, "profiles", "workflow_config")
+
+	// Verify schema on jobs
+	assertColumnExists(t, ctx, conn, "jobs", "external_task_id")
+	assertColumnExists(t, ctx, conn, "jobs", "external_event_id")
+	assertColumnExists(t, ctx, conn, "jobs", "provider_code")
+	assertColumnExists(t, ctx, conn, "jobs", "external_actor_id")
+	assertColumnExists(t, ctx, conn, "jobs", "writeback_status")
+	assertColumnExists(t, ctx, conn, "jobs", "writeback_attempts")
+	assertColumnExists(t, ctx, conn, "jobs", "writeback_last_error")
+	assertColumnExists(t, ctx, conn, "jobs", "task_title")
+	assertColumnExists(t, ctx, conn, "jobs", "task_description")
+
+	// Verify obsolete jobs columns are removed
+	assertColumnDoesNotExist(t, ctx, conn, "jobs", "mello_ticket_id")
+	assertColumnDoesNotExist(t, ctx, conn, "jobs", "mello_comment_id")
+	assertColumnDoesNotExist(t, ctx, conn, "jobs", "ticket_title")
+	assertColumnDoesNotExist(t, ctx, conn, "jobs", "ticket_description")
+
+	// Verify primary key constraints
+	assertConstraintExists(t, ctx, conn, "account_identities", "p", []string{"account_id", "provider_code"})
+	assertConstraintExists(t, ctx, conn, "watched_containers", "p", []string{"account_id", "provider_code", "external_container_id"})
+
+	// Verify unique constraints
+	assertConstraintExists(t, ctx, conn, "provider_connections", "u", []string{"account_id", "provider_code"})
+	assertConstraintExists(t, ctx, conn, "account_identities", "u", []string{"provider_code", "external_user_id"})
+	assertConstraintExists(t, ctx, conn, "watched_containers", "u", []string{"provider_code", "external_container_id"})
+	assertConstraintExists(t, ctx, conn, "runtimes", "u", []string{"token_lookup"})
+	assertConstraintExists(t, ctx, conn, "jobs", "u", []string{"provider_code", "external_event_id"})
 
 	// Verify indexes exist
 	assertIndexExists(t, ctx, conn, "idx_jobs_claim")
 	assertIndexExists(t, ctx, conn, "idx_jobs_one_active_per_runtime")
+	assertIndexExists(t, ctx, conn, "idx_jobs_writeback")
+	assertIndexExists(t, ctx, conn, "idx_jobs_account_id")
+
+	// Verify partial index definitions contain their filters
+	assertIndexDefContains(t, ctx, conn, "idx_jobs_one_active_per_runtime", "status")
+	assertIndexDefContains(t, ctx, conn, "idx_jobs_writeback", "writeback_status")
+	assertIndexDefContains(t, ctx, conn, "idx_jobs_writeback", "pending")
 
 	// 4. Rollback Down
 	err = RollbackMigrations(dsn)
@@ -69,7 +124,7 @@ func TestMigrations(t *testing.T) {
 		t.Fatalf("failed to rollback migrations: %v", err)
 	}
 
-	// Verify tables are removed (except potentially goose_db_version which might stay empty or be deleted depending on goose version)
+	// Verify tables are removed
 	assertTableCount(t, ctx, conn, 0)
 }
 
@@ -87,6 +142,23 @@ func assertTableExists(t *testing.T, ctx context.Context, conn *pgx.Conn, tableN
 	}
 	if !exists {
 		t.Errorf("expected table %s to exist, but it does not", tableName)
+	}
+}
+
+func assertTableDoesNotExist(t *testing.T, ctx context.Context, conn *pgx.Conn, tableName string) {
+	t.Helper()
+	var exists bool
+	query := `SELECT EXISTS (
+		SELECT FROM information_schema.tables
+		WHERE table_schema = 'public'
+		AND table_name = $1
+	)`
+	err := conn.QueryRow(ctx, query, tableName).Scan(&exists)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if exists {
+		t.Errorf("expected table %s NOT to exist, but it does", tableName)
 	}
 }
 
@@ -108,6 +180,24 @@ func assertColumnExists(t *testing.T, ctx context.Context, conn *pgx.Conn, table
 	}
 }
 
+func assertColumnDoesNotExist(t *testing.T, ctx context.Context, conn *pgx.Conn, tableName, columnName string) {
+	t.Helper()
+	var exists bool
+	query := `SELECT EXISTS (
+		SELECT FROM information_schema.columns
+		WHERE table_schema = 'public'
+		AND table_name = $1
+		AND column_name = $2
+	)`
+	err := conn.QueryRow(ctx, query, tableName, columnName).Scan(&exists)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if exists {
+		t.Errorf("expected column %s on table %s NOT to exist, but it does", columnName, tableName)
+	}
+}
+
 func assertIndexExists(t *testing.T, ctx context.Context, conn *pgx.Conn, indexName string) {
 	t.Helper()
 	var exists bool
@@ -122,6 +212,44 @@ func assertIndexExists(t *testing.T, ctx context.Context, conn *pgx.Conn, indexN
 	}
 	if !exists {
 		t.Errorf("expected index %s to exist, but it does not", indexName)
+	}
+}
+
+func assertIndexDefContains(t *testing.T, ctx context.Context, conn *pgx.Conn, indexName, expectedPart string) {
+	t.Helper()
+	var indexDef string
+	query := `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = $1`
+	err := conn.QueryRow(ctx, query, indexName).Scan(&indexDef)
+	if err != nil {
+		t.Fatalf("query failed fetching indexdef for %s: %v", indexName, err)
+	}
+	if !strings.Contains(indexDef, expectedPart) {
+		t.Errorf("expected indexdef for %s to contain %q, but got %q", indexName, expectedPart, indexDef)
+	}
+}
+
+func assertConstraintExists(t *testing.T, ctx context.Context, conn *pgx.Conn, tableName, conType string, columns []string) {
+	t.Helper()
+	var exists bool
+	query := `SELECT EXISTS (
+		SELECT 1 FROM pg_constraint c
+		JOIN pg_class t ON c.conrelid = t.oid
+		JOIN pg_namespace n ON t.relnamespace = n.oid
+		WHERE n.nspname = 'public'
+		  AND t.relname = $1
+		  AND c.contype = $2
+		  AND (
+			  SELECT array_agg(a.attname::text ORDER BY u.ord)
+			  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, ord)
+			  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+		  ) = $3::text[]
+	)`
+	err := conn.QueryRow(ctx, query, tableName, conType, columns).Scan(&exists)
+	if err != nil {
+		t.Fatalf("query failed checking constraint: %v", err)
+	}
+	if !exists {
+		t.Errorf("expected constraint %s on table %s with columns %v to exist, but it does not", conType, tableName, columns)
 	}
 }
 

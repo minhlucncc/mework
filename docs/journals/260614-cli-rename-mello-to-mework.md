@@ -17,7 +17,7 @@ We successfully renamed the CLI's self-identity from `mello` to `mework` while m
   - External API URLs remain `mello.mezon.vn`.
   - Personal access token prefix remains `mello_pat_`.
   - Connection env vars remain `MELLO_BASE_URL`, `MELLO_WORKSPACE_ID`, and `MELLO_API_KEY`.
-  - Package imports (`internal/mello/`) and DB schema columns (`account_boards.mello_board_id`) were preserved.
+  - Package imports (`internal/mello/`) were preserved (the database schema was subsequently rewritten to be provider-agnostic, replacing `account_boards.mello_board_id`).
 
 The renaming followed a strict TDD workflow:
 - **Phase 01**: Lock identity in tests (RED). We updated `config_test.go`, `lifecycle_test.go`, and `trigger_test.go` to assert `~/.mework` paths and use `MEWORK_HOME`, and added a new assertion `rootCmd.Use == "mework"` in `help_test.go`.
@@ -62,7 +62,7 @@ ok  	mework/internal/daemon	(cached)
 
 ## What We Tried
 
-- **Blind find-and-replace**: Rejected immediately. This would have corrupted `internal/mello/` imports, the `mello_pat_` token prefix, and the database migration column `mello_board_id`, breaking external API communication.
+- **Blind find-and-replace**: Rejected immediately. This would have corrupted `internal/mello/` imports and the `mello_pat_` token prefix, breaking external API communication.
 - **Config directory migration shim**: We discussed adding code to automatically migrate `~/.mello` to `~/.mework` if it existed. We rejected this because the CLI has no active production users yet; adding migration code would be premature optimization and unnecessary technical debt (YAGNI).
 
 ## Root Cause Analysis

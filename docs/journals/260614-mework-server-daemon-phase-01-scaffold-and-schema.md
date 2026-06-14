@@ -7,11 +7,13 @@ Date: 2026-06-14
 
 ## Key Changes
 - **Core Tables & Schema Deltas**:
-  - `accounts`: Central table mapped to Mello users.
-  - `account_boards`: Maps `account_id` to `mello_board_id` (UNIQUE), allowing the webhook receiver to identify the target account based on board ID alone (closing the no-PAT webhook routing gap).
+  - `accounts`: Central table mapped to users.
+  - `provider_connections`: Maps accounts to target provider credentials and metadata (such as `webhook_secret` and MCP settings), uniquely keyed by `(account_id, provider_code)`.
+  - `account_identities`: Maps target platform user IDs to the system's `accounts`, uniquely keyed by `(provider_code, external_user_id)`.
+  - `watched_containers`: Maps target platform container IDs (e.g. board IDs) to the system's `accounts`, uniquely keyed by `(provider_code, external_container_id)`.
   - `runtimes`: Incorporates a `token_lookup` column storing an indexed `HMAC-SHA256` hash of the runtime token for O(1) verification on the claim hot-path. Includes a UNIQUE constraint on `(account_id, code)`.
   - `profiles`: Holds account-isolated markdown prompt instructions.
-  - `jobs`: Stores ticket details, metadata, and execution states. Incorporates `attempts` and `last_error` columns for retry limit enforcement, and a snapshot of the ticket context (`ticket_title`, `ticket_description`, `profile_body_snapshot`).
+  - `jobs`: Stores task details, metadata, and execution states. Incorporates `attempts` and `last_error` columns for retry limit enforcement, and a snapshot of the task context (`task_title`, `task_description`, `profile_body_snapshot`) along with provider metadata (`external_task_id`, `external_event_id`, and `provider_code`).
 - **Targeted Database Indexes**:
   - `idx_jobs_claim`: Composite index on `(runtime_id, status, created_at)` to support rapid queued job lookup.
   - `idx_jobs_one_active_per_runtime`: A partial unique index on `(runtime_id) WHERE status IN ('claimed', 'running')` that enforces the single-job-per-runtime invariant at the database layer.
