@@ -11,4 +11,8 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 ## [Unreleased]
 
 ### Changed
+
+- Normalize the parsed workflow keyword to canonical lowercase so triggers like `@mework dev Review …` map to `review` (c0007-normalize-workflow-keyword).
+
+### Changed
 - Webhook trigger parsing now normalizes the recognized workflow keyword to its canonical lowercase form, so `@mework dev Review …` yields workflow `review` (c0006-normalize-workflow-keyword)
