@@ -1,78 +1,72 @@
-# Hướng dẫn Triển khai Mework Server (Deployment Guide)
+# Deployment Guide — MeWork Server
 
-Tài liệu này hướng dẫn chi tiết cách cấu hình, vận hành và triển khai **Mework Server** (Go HTTP backend + PostgreSQL) lên môi trường Production.
+> Audience: operators deploying and running **`mework-server`** (Go HTTP backend +
+> PostgreSQL) in production. For tokens and the full env reference, see
+> [auth-and-secrets.md](auth-and-secrets.md).
 
----
+## 1. System requirements
 
-## 1. Yêu cầu Hệ thống (System Requirements)
+- **OS**: Linux (Ubuntu 22.04 LTS or newer recommended), macOS, or Windows.
+- **Go**: `1.25.7` or newer (to build from source).
+- **PostgreSQL**: `13` or newer.
+- **Docker & Docker Compose** (optional — for container deployment).
 
-- **Hệ điều hành**: Linux (Ubuntu 22.04 LTS hoặc mới hơn được khuyến nghị), macOS hoặc Windows.
-- **Go**: Phiên bản `1.25.7` trở lên (để build từ mã nguồn).
-- **PostgreSQL**: Phiên bản `13` trở lên.
-- **Docker & Docker Compose** (Tùy chọn - nếu triển khai qua container).
+## 2. Configuration (environment variables)
 
----
+`mework-server` is configured entirely through environment variables and **fails fast
+at startup** if a required one is missing.
 
-## 2. Các tham số Cấu hình (Configuration)
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `DATABASE_URL` | string | **yes** | — | PostgreSQL DSN (e.g. `postgres://user:pass@host:port/dbname?sslmode=disable`) |
+| `SERVER_KEY` | string | **yes** | — | HMAC-SHA256 key for hashing/verifying `rt_token` lookups |
+| `MEWORK_SECRET_KEY` | string | **yes** | — | AES-256-GCM key for sealing provider credentials at rest |
+| `LISTEN_ADDR` | string | no | `:8080` | HTTP listen address |
+| `WEBHOOK_SECRET` | string | no | — | Loaded but not enforced; per-connection webhook secrets in the DB are used instead |
+| `MELLO_BASE_URL` | string | no | `https://mello.mezon.vn/api/v1` | Mello REST base URL |
 
-Mework Server được cấu hình hoàn toàn qua các biến môi trường (Environment Variables). 
+> Use long, random, independent values for `SERVER_KEY` and `MEWORK_SECRET_KEY`.
+> Losing `MEWORK_SECRET_KEY` means stored provider credentials can no longer be
+> unsealed (connections must be reconnected); rotating it requires re-sealing.
 
-| Biến Môi trường | Kiểu dữ liệu | Bắt buộc | Mặc định | Mô tả |
-|-----------------|--------------|----------|----------|-------|
-| `DATABASE_URL`  | String       | **Có**   | Không    | DSN kết nối PostgreSQL (Ví dụ: `postgres://user:password@host:port/dbname?sslmode=disable`) |
-| `SERVER_KEY`    | String       | **Có**   | Không    | Khóa bí mật dùng để mã hóa và kiểm tra mã xác thực `rt_token` bằng HMAC-SHA256. |
-| `LISTEN_ADDR`   | String       | Không    | `:8080`  | Địa chỉ IP và Port mà HTTP Server sẽ lắng nghe. |
-| `WEBHOOK_SECRET`| String       | Không    | Trống    | Khóa dùng để xác thực chữ ký (HMAC signature verification) từ Mello Webhook. |
+## 3. Database setup
 
----
+The server runs goose migrations automatically on startup (auto-migration). You only
+need to create an empty database first.
 
-## 3. Khởi tạo và Cấu hình Cơ sở Dữ liệu
-
-Mework Server tích hợp sẵn cơ chế tự động chạy Migration khi khởi động (Auto-migration). Tuy nhiên, bạn cần tạo trước cơ sở dữ liệu trống trong PostgreSQL.
-
-### Sử dụng Docker để chạy PostgreSQL nhanh (cho Test/Staging):
+Quick Postgres via Docker (test/staging):
 ```bash
-# Tạo container Postgres với database 'mework_test'
-docker run --name mework-postgres -e POSTGRES_PASSWORD=mysecretpassword -e POSTGRES_DB=mework -p 5432:5432 -d postgres:16-alpine
+docker run --name mework-postgres \
+  -e POSTGRES_PASSWORD=mysecretpassword -e POSTGRES_DB=mework \
+  -p 5432:5432 -d postgres:16-alpine
 ```
 
-### Sử dụng Dịch vụ PostgreSQL có sẵn:
-Kết nối vào PostgreSQL bằng lệnh `psql` và thực hiện tạo database:
+Or on an existing PostgreSQL service:
 ```sql
 CREATE DATABASE mework;
 ```
 
----
-
-## 4. Biên dịch Mã nguồn (Build)
-
-Để biên dịch Mework Server sang mã máy:
+## 4. Build
 
 ```bash
-# Biên dịch cả CLI (mework) và Server (mework-server)
-make build
-
-# Biên dịch riêng Mework Server
-make build-server
+make build         # builds both CLI (mework) and server (mework-server)
+make build-server  # server only
 ```
+The binary is produced at `bin/mework-server`.
 
-File thực thi được tạo ra tại `bin/mework-server`.
+## 5. Production deployment
 
----
+### Option A — systemd service (recommended on a VPS)
 
-## 5. Triển khai Môi trường Production (Production Deployment)
-
-### Cách A: Chạy trực tiếp dưới dạng Systemd Service (Khuyến nghị trên VPS)
-
-1. Sao chép file thực thi vào thư mục hệ thống:
+1. Copy the binary into place:
    ```bash
    sudo cp bin/mework-server /usr/local/bin/
    ```
 
-2. Tạo file cấu hình dịch vụ Systemd `/etc/systemd/system/mework-server.service`:
+2. Create `/etc/systemd/system/mework-server.service`:
    ```ini
    [Unit]
-   Description=Mework Central Server
+   Description=MeWork Central Server
    After=network.target postgresql.service
 
    [Service]
@@ -80,9 +74,10 @@ File thực thi được tạo ra tại `bin/mework-server`.
    User=nobody
    Group=nogroup
    Environment="DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/mework?sslmode=disable"
-   Environment="SERVER_KEY=vui-long-thay-the-bang-mot-chuoi-ngau-nhien-dai-va-an-toan"
+   Environment="SERVER_KEY=replace-with-a-long-random-secret"
+   Environment="MEWORK_SECRET_KEY=replace-with-a-different-long-random-secret"
    Environment="LISTEN_ADDR=:8080"
-   Environment="WEBHOOK_SECRET=chuoi-secret-webhook-mello"
+   Environment="WEBHOOK_SECRET=mello-webhook-secret"
    ExecStart=/usr/local/bin/mework-server
    Restart=always
    RestartSec=5
@@ -92,25 +87,22 @@ File thực thi được tạo ra tại `bin/mework-server`.
    WantedBy=multi-user.target
    ```
 
-3. Kích hoạt và khởi chạy dịch vụ:
+3. Enable and start:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable mework-server
    sudo systemctl start mework-server
    ```
 
-4. Kiểm tra trạng thái và Logs:
+4. Check status and logs:
    ```bash
    sudo systemctl status mework-server
    journalctl -u mework-server.service -f
    ```
 
----
+### Option B — Docker Compose
 
-### Cách B: Triển khai với Docker Compose
-
-Tạo file `docker-compose.yml` ở thư mục dự án của bạn:
-
+Create `docker-compose.yml`:
 ```yaml
 version: '3.8'
 
@@ -131,15 +123,16 @@ services:
   server:
     build:
       context: .
-      dockerfile: Dockerfile # (Nếu có Dockerfile tương ứng)
-    # Hoặc kéo từ Image Registry của bạn
+      dockerfile: Dockerfile   # if you provide one
+    # or pull from your registry:
     # image: registry.yourdomain.com/mework-server:latest
     container_name: mework-server
     environment:
       - DATABASE_URL=postgres://postgres:strongpassword123@postgres:5432/mework?sslmode=disable
-      - SERVER_KEY=mot-khoa-bao-mat-tieu-chuan-hmac-sha256-o-day
+      - SERVER_KEY=a-long-random-hmac-key
+      - MEWORK_SECRET_KEY=a-different-long-random-aes-key
       - LISTEN_ADDR=:8080
-      - WEBHOOK_SECRET=secret_token_tu_mello
+      - WEBHOOK_SECRET=mello-webhook-secret
     ports:
       - "8080:8080"
     depends_on:
@@ -150,43 +143,43 @@ volumes:
   mework_db_data:
 ```
 
-Khởi chạy hệ thống bằng lệnh:
+Start it:
 ```bash
 docker compose up -d
 ```
 
----
+## 6. Health check
 
-## 6. Kiểm tra Sức khỏe Hệ thống (Health Check)
+The server exposes `/healthz`. It returns `200 OK` when PostgreSQL is reachable, and
+`503 Service Unavailable` otherwise.
 
-Hệ thống cung cấp một API kiểm tra sức khỏe tại `/healthz`. API này sẽ trả về HTTP `200 OK` nếu kết nối PostgreSQL hoạt động bình thường, ngược lại trả về `503 Service Unavailable`.
-
-### Kiểm tra bằng curl:
 ```bash
 curl -i http://localhost:8080/healthz
 ```
 
-**Kết quả thành công (200 OK):**
+Successful response:
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
-Content-Length: 15
 
 {"status":"ok"}
 ```
 
----
+## 7. Backup & recovery
 
-## 7. Sao lưu & Phục hồi (Backup & Recovery)
+All durable state (accounts, runtimes, profiles, job history, sealed connections) lives
+in PostgreSQL, so a periodic database dump is sufficient.
 
-Do toàn bộ dữ liệu quan trọng (Tài khoản, Runtime, Profiles, Lịch sử Jobs) đều lưu trong Postgres, bạn chỉ cần thực hiện sao lưu định kỳ database:
-
-### Sao lưu (Backup):
+Backup:
 ```bash
 pg_dump -U postgres -h localhost -d mework > mework_backup_$(date +%Y%m%d).sql
 ```
 
-### Phục hồi (Restore):
+Restore:
 ```bash
 psql -U postgres -h localhost -d mework < mework_backup_xxxx.sql
 ```
+
+> The AES-256-GCM-sealed provider credentials in the dump can only be unsealed with the
+> same `MEWORK_SECRET_KEY` the server runs with. Back up that key securely and
+> separately from the database.

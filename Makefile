@@ -46,3 +46,20 @@ snapshot:
 clean:
 	rm -rf bin dist
 
+# ---- OpenSpec ship-all shortcuts (thin wrappers; the real work runs via the
+# slash command /opsx:ship-all → Workflow({ name: 'ship-all', args: ... }))
+# These targets are convenience aliases for terminal users who prefer Make.
+
+# Dry-run the batch ship (no commits). Surfaces the queue + per-change mode.
+ship-dry-run:
+	@echo "ship-all --dry-run — launches via /opsx:ship-all (slash command)."
+
+# Batch-ship all ACTIVE changes through apply → ship → archive locally.
+# Pass ARGS="--from c0008 --bump patch" etc. for partial runs.
+ship-all:
+	@echo "ship-all — launches via /opsx:ship-all (slash command). Pass ARGS=\"...\" to forward flags."
+
+# Batch-ship a single change (whitelist). Pass SLUG="c0008-object-storage".
+ship-one:
+	@echo "ship-all --only $(SLUG) — launches via /opsx:ship-all (slash command)."
+

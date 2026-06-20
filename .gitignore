@@ -70,11 +70,6 @@ __pycache__
 prompt.md
 ck.md
 
-# Generated runtime layout for release/install smoke tests
-/.claude/
-# But track repo-level rules that Claude Code reads
-!/.claude/rules/
-
 # Local-only state inside tracked claude source
 claude/agent-memory/
 claude/hooks/.logs/
@@ -87,12 +82,16 @@ claude/skills/ai-multimodal/assets/demo-*.claude/session-state/*.tmp
 .gemini/settings.json
 # Showoff/marketing assets (images, showcases)
 assets/
-# Exception: use-mcp ships a persistent tool catalog at assets/tools.json
-!claude/skills/use-mcp/assets/
-!claude/skills/use-mcp/assets/**
 
 # External repos for study/reference
 external/
 
 # Git worktrees (local development only)
 worktrees/
+
+# ship-plan / ship-code execution scaffolding (local-only; the durable record
+# lives in openspec/changes/<name>/ + git history). See docs/openspec-workflow.md.
+.handoff/
+
+# ship-all durable progress (re-discovered on each run from openspec list --json)
+openspec/changes/.ship-all-progress.json

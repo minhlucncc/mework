@@ -4,6 +4,29 @@ import (
 	"testing"
 )
 
+func TestNormalizeWorkflow(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		wantKW   string
+		wantOk   bool
+	}{
+		{name: "exact match", in: "review", wantKW: "review", wantOk: true},
+		{name: "mixed case", in: "Review", wantKW: "review", wantOk: true},
+		{name: "whitespace padded", in: "  ship  ", wantKW: "ship", wantOk: true},
+		{name: "unknown keyword", in: "deploy", wantKW: "", wantOk: false},
+		{name: "empty", in: "", wantKW: "", wantOk: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotKW, gotOk := NormalizeWorkflow(tt.in)
+			if gotKW != tt.wantKW || gotOk != tt.wantOk {
+				t.Errorf("NormalizeWorkflow(%q) = (%q, %v), want (%q, %v)", tt.in, gotKW, gotOk, tt.wantKW, tt.wantOk)
+			}
+		})
+	}
+}
+
 func TestParseTrigger(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -16,6 +39,14 @@ func TestParseTrigger(t *testing.T) {
 		{
 			name:         "valid trigger with profile and workflow",
 			body:         "@mework dev review fix the login bug",
+			wantProfile:  "dev",
+			wantWorkflow: "review",
+			wantInst:     "fix the login bug",
+			wantOk:       true,
+		},
+		{
+			name:         "workflow keyword normalized to canonical case",
+			body:         "@mework dev Review fix the login bug",
 			wantProfile:  "dev",
 			wantWorkflow: "review",
 			wantInst:     "fix the login bug",

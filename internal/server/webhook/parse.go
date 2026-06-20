@@ -38,8 +38,8 @@ func ParseTrigger(body string) (profile, workflow, instructions string, ok bool)
 
 	if len(words) >= 2 {
 		secondWord := words[1]
-		if isRecognizedWorkflow(secondWord) {
-			workflow = secondWord
+		if canonical, ok := NormalizeWorkflow(secondWord); ok {
+			workflow = canonical
 			// Find index of the workflow word in remaining to slice the rest properly
 			pos := strings.Index(remaining, secondWord)
 			if pos != -1 {
@@ -61,6 +61,18 @@ func ParseTrigger(body string) (profile, workflow, instructions string, ok bool)
 	}
 
 	return profile, workflow, instructions, true
+}
+
+// NormalizeWorkflow trims surrounding whitespace from w and lowercases it; when the
+// result names a recognized workflow it returns the canonical keyword and true,
+// otherwise it returns ("", false). Callers get a stable, lowercase workflow value
+// regardless of how the keyword was cased in the comment.
+func NormalizeWorkflow(w string) (string, bool) {
+	canonical := strings.ToLower(strings.TrimSpace(w))
+	if isRecognizedWorkflow(canonical) {
+		return canonical, true
+	}
+	return "", false
 }
 
 func isRecognizedWorkflow(w string) bool {
