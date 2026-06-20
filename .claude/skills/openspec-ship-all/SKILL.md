@@ -12,8 +12,29 @@ metadata:
 # Ship All — the per-change decision matrix
 
 This is the source of truth for how the `ship-all` orchestrator decides what to
-do with each ACTIVE OpenSpec change. The orchestrator **never** asks per change
-— every decision comes from this matrix.
+do with each ACTIVE OpenSpec change. The orchestrator runs **fully automatically**
+— it never asks the user (per change or overall); every decision comes from this
+matrix.
+
+## Branch + execution model (applies to every ship mode)
+
+The orchestrator owns branch creation; `ship-code` owns the implementation. For
+every change that ships, the orchestrator first runs **branch-prep** — from a clean
+`main` it creates (or, on resume, reuses) `feat/<change>`. It then invokes the
+nested workflows via the lowercase `workflow()` helper (NOT by spawning an agent
+that calls `Workflow()` — workflow-spawned subagents have no `Workflow()` tool):
+
+1. `workflow('ship-plan', { change, date, local: true })` — breaks the change's
+   **open tasks** into test+code pairs under `.handoff/<change>/` (gitignored).
+2. `workflow('ship-code', { change, date, local: true, base: 'main', bump,
+   noPushMain, archive, mergeStrategy, reserveTokens, maxRepairs })` — runs each
+   pair **test-first** (Red→Green→one commit), verifies, reviews, then merges
+   `feat/<change>` into `main` **locally (no PR)**, syncs delta specs, archives,
+   and optionally tags.
+
+There is **no standalone `/opsx:apply`** step — `ship-code` does the implementation
+test-first per pair. (A bulk apply would write uncommitted code and trip
+`ship-code`'s clean-tree preflight.)
 
 ## Per-change decision
 
@@ -22,10 +43,10 @@ and `openspec list --json`, then classifies the change by **mode**:
 
 | Mode | Trigger | Steps run by orchestrator |
 |---|---|---|
-| `apply+ship` | Active, has proposal + design + tasks + specs + `.openspec.yaml`, **0 tasks done** | 1. `/opsx:apply <c>` (per-task implementation loop, ticks tasks) → 2. `Workflow({ name: 'ship-plan', args: { change, date, local: true } })` → 3. `Workflow({ name: 'ship-code', args: { change, date, local: true, bump, noPushMain, archive, mergeStrategy, reserveTokens, maxRepairs } })` |
-| `spec+ship` | Active, all artifacts present, **all tasks `[x]`**, no evidence dir | 1. `Workflow({ name: 'spec-change', args: { change, maxRevisions: 1 } })` → 2. `ship-plan` → 3. `ship-code --local` |
-| `ship-only` | Active, all tasks `[x]`, evidence dir exists, delta spec already in `openspec/specs/` | 1. `ship-plan` → 2. `ship-code --local` |
-| `repair+ship` | Active, **missing `.openspec.yaml`** (scaffolding-only) | 1. `openspec new change <c>` (additive — does NOT touch existing proposal/design/tasks/specs) → 2. re-classify → 3. appropriate ship path |
+| `apply+ship` | Active, has proposal + design + tasks + specs + `.openspec.yaml`, **0 tasks done** | branch-prep (`feat/<c>` from `main`) → `ship-plan` → `ship-code --local` (ship-code implements every open task test-first, one commit per pair, then merges + archives) |
+| `spec+ship` | Active, all artifacts present, **all tasks `[x]`**, no evidence dir | branch-prep → (`workflow('spec-change', { change, maxRevisions: 1 })` when not `--skip-spec`) → `ship-plan` → `ship-code --local` |
+| `ship-only` | Active, all tasks `[x]`, evidence dir exists, delta spec already in `openspec/specs/` | branch-prep → `ship-plan` (0 pairs) → `ship-code --local` (verifies existing code, merges, archives) |
+| `repair+ship` | Active, **missing `.openspec.yaml`** (scaffolding-only) | 1. `openspec new change <c>` (additive — does NOT touch existing proposal/design/tasks/specs) → 2. promote to `apply+ship` → 3. branch-prep → ship-plan → ship-code |
 | `archive-only` | Active, all tasks `[x]`, no `feat/<c>` branch, evidence dir + delta-spec sync complete, no code work expected | 1. `openspec archive <c> -y --skip-specs --no-validate` |
 | `skip` | Already ARCHIVED, OR active but no tasks.md (incomplete proposal) | Logged in `.ship-all-progress.json` → `progress.skipped`; never halts the run |
 
@@ -35,9 +56,9 @@ and `openspec list --json`, then classifies the change by **mode**:
 2. **Sort by cNNNN ordinal** (lexicographic) AFTER expanding `c0014` into `c0014a, c0014b, c0014c`. The numeric ordering respects the dependency graph because each change's proposal was authored in the order the deps required.
 3. **Apply `--from <cNNNN>` and `--only <list>` filters** AFTER sorting, so the queue is consistent.
 4. **`--dry-run`** runs only Phases 1-2 (Discover + Plan), writes `.ship-all-progress.json`, returns the planned queue. Never commits.
-5. **`--skip-apply`** upgrades all `apply+ship` entries to `spec+ship` (treats them as if all tasks were already `[x]`). Useful for resume after partial runs.
-6. **`--skip-spec`** downgrades all `spec+ship` entries to `ship-only`. Default in batch mode (the 6-critic spec quality pass is too expensive to run for every change in a batch).
-7. **Budget reserve**: the orchestrator passes `reserveTokens` to every nested Workflow call so a budget hit in ship-code halts the entire run cleanly (not mid-pair).
+5. **`--skip-spec`** skips the `spec-change` quality pass for `spec+ship` entries (they go straight to `ship-plan` → `ship-code`). Default in batch mode (the 6-critic spec quality pass is too expensive to run for every change in a batch).
+6. **Budget reserve**: the orchestrator passes `reserveTokens` to every nested `workflow()` call so a budget hit in ship-code halts the entire run cleanly (not mid-pair).
+7. **Nesting**: invoke `ship-plan`/`ship-code`/`spec-change` with the lowercase `workflow()` helper (one level of nesting). Never spawn an `agent()` that tries to call `Workflow()` — those subagents lack the tool.
 
 ## Halt semantics
 

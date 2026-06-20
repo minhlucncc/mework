@@ -351,17 +351,29 @@ Review feedback on the local path is handled by the user on the
 
 The `/opsx:ship --local` flow ships **one change at a time**. `/opsx:ship-all`
 walks **every ACTIVE OpenSpec change** through the full pipeline in one go,
-auto-deciding per change what to do, and halting on first failure with full
-progress.
+**fully automatically — no confirmation, no per-change prompts**, auto-deciding
+per change what to do, and halting on first failure with full progress. Each
+change keeps the full workflow — branch, per-task commits, verify, review — and
+merges into `main` **locally instead of opening a PR**.
+
+**Branch + execution model.** The orchestrator owns branch creation; `ship-code`
+owns the implementation. For every change that ships, it first runs **branch-prep**
+(from a clean `main`, create or reuse `feat/<change>`), then invokes the nested
+workflows via the lowercase `workflow()` helper — `workflow('ship-plan', …)` then
+`workflow('ship-code', …)`. (It does **not** spawn an agent that calls `Workflow()`;
+workflow-spawned subagents have no `Workflow()` tool — that was the original break.)
+There is **no standalone `/opsx:apply`** step: `ship-code` implements every open task
+test-first (Red→Green→one commit per pair). A bulk apply would write uncommitted code
+and trip `ship-code`'s clean-tree preflight.
 
 **Per-change mode** (decided from `openspec status --change <c> --json`):
 
 | `openspec status` | Mode | Steps |
 |---|---|---|
-| full artifacts, `.openspec.yaml` present, 0 tasks done | `apply+ship` | `/opsx:apply <c>` → `ship-plan` → `ship-code --local` |
-| full artifacts, all tasks `[x]`, no evidence/ | `spec+ship` | `ship-plan` → `ship-code --local` (spec quality pass skipped by default in batch) |
-| full artifacts, all tasks `[x]`, evidence/ present | `ship-only` | `ship-plan` → `ship-code --local` |
-| missing `.openspec.yaml` (scaffolding-only, e.g. c0014a/b/c) | `repair+ship` | `openspec new change <c>` (additive) → re-classify → appropriate ship path |
+| full artifacts, `.openspec.yaml` present, 0 tasks done | `apply+ship` | branch-prep → `ship-plan` → `ship-code --local` (ship-code implements every open task test-first, then merges + archives) |
+| full artifacts, all tasks `[x]`, no evidence/ | `spec+ship` | branch-prep → (`spec-change` quality pass, skipped by default in batch) → `ship-plan` → `ship-code --local` |
+| full artifacts, all tasks `[x]`, evidence/ present | `ship-only` | branch-prep → `ship-plan` (0 pairs) → `ship-code --local` (verifies, merges, archives) |
+| missing `.openspec.yaml` (scaffolding-only, e.g. c0014a/b/c) | `repair+ship` | `openspec new change <c>` (additive) → promote to `apply+ship` → branch-prep → ship-plan → ship-code |
 | tasks all `[x]`, no `feat/<c>` branch, evidence + sync done | `archive-only` | `openspec archive <c> -y --skip-specs --no-validate` |
 | already ARCHIVED, OR active but no tasks.md | `skip` | logged; never halts |
 
@@ -369,9 +381,9 @@ progress.
 c0014c`. The numeric ordering respects the dependency graph (proposals were
 authored in the order the deps required).
 
-**Always runs a dry-run first.** The slash command launches `ship-all` with
-`dryRun: true`, surfaces the queue to the user, and only launches the real
-run after an explicit confirmation.
+**No confirmation gate.** The slash command launches the real run immediately.
+`--dry-run` is an opt-in plan-only invocation (Discover + Plan, writes
+`.ship-all-progress.json`, no commits).
 
 **Halt semantics.** Halt on first failure with `{ change, failureStage,
 failureLog, mergeSha, archivePath, resumeFrom, summary }`. The merge (if it
@@ -384,11 +396,10 @@ already-shipped entries are skipped. `--only <c1,c2,...>` is a comma-separated
 whitelist (after sorting). `--retry-failed` (planned) re-tries failed entries.
 
 **Flags.**
-`--from <cNNNN>`, `--only <list>`, `--dry-run`, `--skip-apply` (treat all as
-already-implemented), `--skip-spec` (default true in batch), `--bump
-{patch|minor|major}`, `--push-main`, `--no-archive`, `--merge-strategy
-{squash|no-ff|ff-only}`, `--reserve-tokens <n>`, `--max-repairs <n>`,
-`--force`.
+`--from <cNNNN>`, `--only <list>`, `--dry-run`, `--skip-spec` (default true in
+batch — skips the `spec-change` quality pass), `--bump {patch|minor|major}`,
+`--push-main`, `--no-archive`, `--merge-strategy {squash|no-ff|ff-only}`,
+`--reserve-tokens <n>`, `--max-repairs <n>`, `--force`.
 
 **Skill source of truth.** `.claude/skills/openspec-ship-all/SKILL.md`
 documents the decision matrix and halt protocol.

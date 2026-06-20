@@ -156,7 +156,7 @@ log(`discover: ${queue.length} change(s) to ship; ${skipped.length} skipped; ${J
 phase('Plan')
 const progress = {
   runId: `${DATE}-ship-all-1`,
-  startedAt: new Date().toISOString(),
+  startedAt: DATE, // Date.now()/new Date() throw inside workflow scripts; the run date is enough
   date: DATE,
   fromChange, onlyChange, skipApply, skipSpec,
   mergeStrategy, bump, noPushMain, archive,
@@ -241,10 +241,21 @@ if (repairEntries.length) {
   }
 }
 
-// ---------------------------------------------------------------- Phase 4: Apply+Ship loop
+// ---------------------------------------------------------------- Phase 4: Ship loop
 phase('Apply+Ship loop')
+// Each change keeps the FULL per-change workflow — branch, per-task commits, verify,
+// review — and differs only by merging into `main` LOCALLY instead of opening a PR
+// (ship-code's --local path). The implementation is test-first: ship-plan breaks the
+// change's open tasks into test+code pairs and ship-code runs Red→Green→one-commit-per-
+// pair. There is NO standalone /opsx:apply (it would write uncommitted code and trip
+// ship-code's clean-tree preflight). The orchestrator owns branch creation; ship-code
+// owns the implementation, commits, merge, and archive.
+//
+// IMPORTANT: nested workflows are invoked via the lowercase `workflow()` helper (run a
+// saved workflow inline, ONE level of nesting). ship-plan/ship-code/spec-change do not
+// call workflow() themselves, so this is allowed. We must NOT spawn an agent() and ask
+// it to call Workflow() — workflow-spawned subagents have no Workflow() tool.
 async function runOne(entry) {
-  const start = Date.now()
   entry.status = 'in_progress'
   const args2 = {
     change: entry.change,
@@ -255,105 +266,84 @@ async function runOne(entry) {
     mergeStrategy, bump, noPushMain, archive,
     reserveTokens: reserve, maxRepairs, force,
   }
-  if (entry.mode === 'apply+ship' && !skipApply) {
-    // Step 1: openspec apply (per-task implementation loop)
-    log(`${entry.change}: apply (mode=${entry.mode})`)
-    const applyRes = await agent(
-      [
-        `Run /opsx:apply for change "${entry.change}" end-to-end. ${SKILL('openspec-apply-change')} ${SKILL('incremental-implementation')}`,
-        `Use the Skill tool: Skill({ skill: "openspec-apply-change", args: { change: "${entry.change}" } }).`,
-        `Loop through every task in openspec/changes/${entry.change}/tasks.md, implement it minimally (write code + tick "- [ ]" → "- [x]"), and continue until all tasks are done OR a task is genuinely blocked. Do NOT commit per task — the ship-code phase makes one commit per pair.`,
-        `Read openspec/changes/${entry.change}/{proposal.md,design.md,tasks.md} and the delta specs in openspec/changes/${entry.change}/specs/ BEFORE making any code changes.`,
-        `Return { ok, tasksCompleted, totalTasks, notes }. ok=false if any task was genuinely blocked and needs human clarification.`,
-      ].join('\n'),
-      {
-        schema: {
-          type: 'object', additionalProperties: false,
-          required: ['ok', 'tasksCompleted', 'totalTasks', 'notes'],
-          properties: {
-            ok: { type: 'boolean' },
-            tasksCompleted: { type: 'integer' }, totalTasks: { type: 'integer' },
-            notes: { type: 'string' },
-          },
-        },
-        label: `apply:${entry.change}`, phase: 'Apply+Ship loop', agentType: 'general-purpose',
-      },
-    )
-    if (!applyRes || !applyRes.ok) {
-      entry.status = 'failed'
-      entry.failureStage = 'apply'
-      entry.failureLog = applyRes ? applyRes.notes : 'null'
-      entry.durationMs = Date.now() - start
-      return { halt: true, entry, reason: `apply failed: ${entry.failureLog}` }
-    }
-    log(`${entry.change}: apply done (${applyRes.tasksCompleted}/${applyRes.totalTasks} tasks)`)
-  }
-  // Step 2+3: ship-plan + ship-code --local
-  // We launch them sequentially. ship-plan writes the handoff; ship-code executes it.
-  log(`${entry.change}: ship-plan`)
-  const plan2 = await agent(
+
+  // Step 1: branch-prep — start each change from a clean `main`, on feat/<change>.
+  // ship-code's LOCAL preflight requires we are ALREADY on feat/<change> with a clean
+  // tree and refuses to create the branch itself; this is what makes branchReady=true.
+  log(`${entry.change}: branch-prep (base=main)`)
+  const prep = await agent(
     [
-      `Run /opsx:ship-plan for change "${entry.change}". Use the Workflow tool: Workflow({ name: "ship-plan", args: ${JSON.stringify({ change: entry.change, date: DATE, local: true })} }). The workflow writes a handoff under .handoff/${entry.change}/. Do NOT commit, do NOT push. Return { ok, handoffDir, pairs, notes }.`,
+      `Prepare the git branch for shipping OpenSpec change "${entry.change}" locally. Use Bash only. Do NOT commit or modify any files.`,
+      `1. git status --porcelain — the working tree MUST be clean except for files under .claude/ or .handoff/ (tolerated/gitignored). If any OTHER tracked file is dirty, ok=false, reason="dirty tree before ${entry.change}; commit/stash first", STOP.`,
+      `2. git switch main (the base). If it fails, ok=false, reason="cannot switch to main: <err>", STOP.`,
+      `3. Create or reuse the feature branch feat/${entry.change}:`,
+      `   - If \`git rev-parse --verify "feat/${entry.change}"\` succeeds, the branch already exists (resume): \`git switch "feat/${entry.change}"\`.`,
+      `   - Otherwise create it from main: \`git switch -c "feat/${entry.change}"\`.`,
+      `4. Confirm \`git branch --show-current\` prints exactly "feat/${entry.change}". Return { ok, branch, created, notes }.`,
     ].join('\n'),
     {
       schema: {
         type: 'object', additionalProperties: false,
-        required: ['ok', 'handoffDir', 'pairs', 'notes'],
-        properties: { ok: { type: 'boolean' }, handoffDir: { type: 'string' }, pairs: { type: 'integer' }, notes: { type: 'string' } },
+        required: ['ok', 'branch', 'notes'],
+        properties: { ok: { type: 'boolean' }, branch: { type: 'string' }, created: { type: 'boolean' }, notes: { type: 'string' } },
       },
-      label: `plan:${entry.change}`, phase: 'Apply+Ship loop', agentType: 'general-purpose',
+      label: `branch:${entry.change}`, phase: 'Apply+Ship loop', agentType: 'general-purpose',
     },
   )
+  if (!prep || !prep.ok) {
+    entry.status = 'failed'
+    entry.failureStage = 'branch-prep'
+    entry.failureLog = prep ? prep.notes : 'null'
+    return { halt: true, entry, reason: `branch-prep failed: ${entry.failureLog}` }
+  }
+  log(`${entry.change}: on ${prep.branch}`)
+
+  // Step 2 (optional): spec quality pass for spec+ship when not skipped. skipSpec
+  // defaults true in batch, so this is normally skipped.
+  if (entry.mode === 'spec+ship' && !skipSpec) {
+    log(`${entry.change}: spec-change (quality pass)`)
+    const spec2 = await workflow('spec-change', { change: entry.change, maxRevisions: 1 })
+    if (!spec2 || !spec2.ok) {
+      entry.status = 'failed'
+      entry.failureStage = 'spec-change'
+      entry.failureLog = spec2 ? (spec2.reason || spec2.notes || '') : 'null'
+      return { halt: true, entry, reason: `spec-change failed: ${entry.failureLog}` }
+    }
+  }
+
+  // Step 3: ship-plan — break the change's open tasks into test+code pairs (handoff
+  // under .handoff/<change>/, gitignored so the tree stays clean for ship-code).
+  log(`${entry.change}: ship-plan`)
+  const plan2 = await workflow('ship-plan', { change: entry.change, date: DATE, local: true })
   if (!plan2 || !plan2.ok) {
     entry.status = 'failed'
     entry.failureStage = 'ship-plan'
-    entry.failureLog = plan2 ? plan2.notes : 'null'
-    entry.durationMs = Date.now() - start
+    entry.failureLog = plan2 ? (plan2.reason || plan2.notes || '') : 'null'
     return { halt: true, entry, reason: `ship-plan failed: ${entry.failureLog}` }
   }
-  if (plan2.pairs === 0) {
-    // No open tasks — the change is ready to ship-only (archive via ship-code's local path).
-    log(`${entry.change}: ship-plan wrote 0 pairs — proceeding to ship-code (which will archive + tag)`)
+  const pairs = plan2.pairs || 0
+  if (pairs === 0) {
+    // No open tasks (e.g. ship-only) — ship-code verifies the existing code, merges, archives.
+    log(`${entry.change}: ship-plan wrote 0 pairs — ship-code will verify + merge + archive`)
   }
-  log(`${entry.change}: ship-code --local (pairs=${plan2.pairs})`)
-  const code2 = await agent(
-    [
-      `Run /opsx:ship-code for change "${entry.change}" with the local path. Use the Workflow tool: Workflow({ name: "ship-code", args: ${JSON.stringify(args2)} }). The workflow branches, runs per-pair Red→Green→one commit, verifies, optionally reviews, merges into main locally, syncs delta specs, archives the change, optionally tags, and cleans up. Return { ok, stage, mergeSha, archivePath, tag, commits, repairCount, reviewVerdict, notes }.`,
-    ].join('\n'),
-    {
-      schema: {
-        type: 'object', additionalProperties: false,
-        required: ['ok', 'stage', 'mergeSha', 'archivePath', 'tag', 'commits', 'reviewVerdict', 'notes'],
-        properties: {
-          ok: { type: 'boolean' },
-          stage: { type: 'string' },
-          mergeSha: { type: ['string', 'null'] },
-          archivePath: { type: ['string', 'null'] },
-          tag: { type: ['string', 'null'] },
-          commits: { type: 'integer' },
-          repairCount: { type: 'integer' },
-          reviewVerdict: { type: 'string' },
-          notes: { type: 'string' },
-        },
-      },
-      label: `code:${entry.change}`, phase: 'Apply+Ship loop', agentType: 'general-purpose',
-    },
-  )
+
+  // Step 4: ship-code --local — per-pair Red→Green→one commit, verify, review, merge
+  // into main LOCALLY (no PR), sync specs, archive, optional tag, cleanup.
+  log(`${entry.change}: ship-code --local (pairs=${pairs})`)
+  const code2 = await workflow('ship-code', args2)
   if (!code2 || !code2.ok) {
     entry.status = 'failed'
     entry.failureStage = code2 ? code2.stage : 'ship-code'
-    entry.failureLog = code2 ? code2.notes : 'null'
-    entry.durationMs = Date.now() - start
-    entry.mergeSha = code2 ? code2.mergeSha : null
+    entry.failureLog = code2 ? (code2.reason || code2.notes || '') : 'null'
+    entry.mergeSha = code2 ? (code2.mergeSha || null) : null
     return { halt: true, entry, reason: `ship-code failed at stage=${entry.failureStage}: ${entry.failureLog}` }
   }
   entry.status = 'shipped'
-  entry.mergeSha = code2.mergeSha
-  entry.archivePath = code2.archivePath
-  entry.tag = code2.tag
-  entry.commits = code2.commits
-  entry.durationMs = Date.now() - start
-  log(`${entry.change}: shipped (merge=${entry.mergeSha} archive=${entry.archivePath} tag=${entry.tag} commits=${entry.commits} duration=${entry.durationMs}ms)`)
+  entry.mergeSha = code2.mergeSha || null
+  entry.archivePath = code2.archivePath || null
+  entry.tag = code2.tag || null
+  entry.commits = Array.isArray(code2.commits) ? code2.commits.length : (code2.commits || 0)
+  log(`${entry.change}: shipped (merge=${entry.mergeSha} archive=${entry.archivePath} tag=${entry.tag} commits=${entry.commits})`)
   return { halt: false, entry }
 }
 
@@ -386,7 +376,6 @@ if (!haltReason) {
       failedEntry = entry
       break
     }
-    const start = Date.now()
     entry.status = 'in_progress'
     const arch = await agent(
       [
@@ -414,8 +403,7 @@ if (!haltReason) {
     }
     entry.status = 'shipped'
     entry.archivePath = arch.archivePath
-    entry.durationMs = Date.now() - start
-    log(`${entry.change}: archived to ${entry.archivePath} (${entry.durationMs}ms)`)
+    log(`${entry.change}: archived to ${entry.archivePath}`)
   }
 }
 
@@ -433,7 +421,6 @@ const summary = {
   shippedDetails: shipped.map((e) => ({
     change: e.change, mode: e.mode, commits: e.commits || 0,
     mergeSha: e.mergeSha, archivePath: e.archivePath, tag: e.tag,
-    durationMs: e.durationMs,
   })),
   failedDetails: failed.map((e) => ({
     change: e.change, mode: e.mode, failureStage: e.failureStage, failureLog: e.failureLog,

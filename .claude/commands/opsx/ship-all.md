@@ -5,10 +5,12 @@ category: Workflow
 tags: [workflow, automation, batch, ship, local, experimental]
 ---
 
-Ship **every ACTIVE OpenSpec change** through the local pipeline in one go.
-The orchestrator auto-decides per change whether to apply+ship, spec+ship,
-ship-only, repair+ship, or archive-only — **never asks per change**. Halts on
-first failure with full progress. No `gh`, no remote push (unless `--push-main`).
+Ship **every ACTIVE OpenSpec change** through the local pipeline in one go,
+**fully automatically — no confirmation, no per-change prompts**. The orchestrator
+auto-decides per change whether to apply+ship, spec+ship, ship-only, repair+ship,
+or archive-only. Each change keeps the full workflow — branch, per-task commits,
+verify, review — and merges into `main` **locally instead of opening a PR**. Halts
+on first failure with full progress. No `gh`, no remote push (unless `--push-main`).
 
 **Input**: Optional `--from <cNNNN>` (start from this ordinal), `--only <list>`
 (comma-separated whitelist), `--dry-run` (plan-only), `--skip-apply` (treat all
@@ -21,48 +23,40 @@ skipApply=false. Per-change evidence is always written.
 
 **Steps**
 
-1. **One confirmation gate.** The slash command does NOT immediately launch
-   the workflow — instead, it always runs a dry-run first to discover the
-   queue, then asks the user to confirm.
-
-   a. Launch a dry-run via the Workflow tool:
-      ```
-      Workflow({ name: 'ship-all', args: { dryRun: true, ...other-args } })
-      ```
-      Capture the returned `queue`, `skipped`, and `stats`.
-
-   b. Show the queue as a table (change | mode | tasks | status | reason).
-
-   c. AskUserQuestion with options:
-      - **Ship them** — proceed with the planned queue
-      - **Edit the queue first** — point at `openspec/changes/.ship-all-progress.json`,
-        stop (user edits and re-runs)
-      - **Cancel**
-
-2. **Launch the real workflow.** On "Ship them":
+1. **Launch the workflow directly — no confirmation gate.** The command runs the
+   full pipeline immediately:
    ```
    Workflow({ name: 'ship-all', args: {
-     date, fromChange, onlyChange, skipApply, skipSpec,
+     date: <today YYYY-MM-DD>, fromChange, onlyChange, skipApply, skipSpec,
      mergeStrategy, bump, noPushMain, archive, reserveTokens, maxRepairs, force
    }})
    ```
+   The orchestrator's Discover + Plan phases write the queue to
+   `openspec/changes/.ship-all-progress.json`, then it ships every change in
+   cNNNN order without stopping to ask. Pass `--dry-run` only if the user
+   explicitly wants a plan-only run (Discover + Plan, no commits) — otherwise
+   default to the real run.
 
-3. **Surface progress.** As each change ships, show the result: change name,
-   mode, per-change duration, evidence dir, mergeSha, archivePath, tag. On
-   halt, show the failing change + reason + last commit + suggested fix.
+2. **Surface progress.** As each change ships, show the result: change name,
+   mode, evidence dir, mergeSha, archivePath, tag. On halt, show the failing
+   change + reason + last commit + suggested fix.
 
-4. **Relay the final report.** Per-change summary table (change | mode |
-   commits | mergeSha | archivePath | tag | durationMs) + total stats +
-   resume instructions. Always includes the `resumeFrom` change so a halted
-   run can be picked up with `--from`.
+3. **Relay the final report.** Per-change summary table (change | mode |
+   commits | mergeSha | archivePath | tag) + total stats + resume instructions.
+   Always includes the `resumeFrom` change so a halted run can be picked up
+   with `--from`.
 
 **Guardrails**
+- **Fully automatic** — never asks the user, per change or overall.
 - Halt on first failure. **Never** roll back merged changes. The merge is local;
   if the user wants to undo it: `git reset --hard <pre-merge-sha>`.
 - Per-change evidence is always written, even on failure.
-- `--dry-run` is the recommended first invocation — it surfaces the queue
-  without committing anything.
-- The orchestrator refuses to start unless the tree is clean OR `--force`.
+- The orchestrator starts each change from a clean `main` and creates
+  `feat/<change>` itself; a globally dirty tree (tracked files outside `.claude/`)
+  trips the per-change branch-prep, which halts cleanly with a "commit/stash
+  first" reason.
+- `--dry-run` is an opt-in plan-only invocation — it surfaces the queue without
+  committing anything.
 - Skill `.claude/skills/openspec-ship-all/SKILL.md` is the source of truth
   for the per-change decision matrix.
 - Resume: re-running with `--from <cNNNN>` picks up where the previous run

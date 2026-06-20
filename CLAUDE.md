@@ -159,16 +159,21 @@ code.**
   PR UI rather than via a dedicated workflow.
 - `/opsx:archive` — finalize and move the change to `openspec/changes/archive/`.
 - `/opsx:ship-all` — auto-discover every ACTIVE OpenSpec change and ship the
-  full project — apply → ship → archive — locally, automatically, with
-  halt-on-failure and idempotent resume. Per change, decides mode from
-  `openspec status` (apply+ship / spec+ship / ship-only / repair+ship /
-  archive-only / skip). Sorted by cNNNN dependency order. Writes
-  `openspec/changes/.ship-all-progress.json` as durable state. Always runs a
-  dry-run first to confirm the queue. Honors `--from <cNNNN>`, `--only <list>`,
-  `--dry-run`, `--skip-apply`, `--skip-spec`, `--bump {patch|minor|major}`,
-  `--push-main`, `--no-archive`, `--merge-strategy`, `--force`. The skill
-  `.claude/skills/openspec-ship-all/SKILL.md` is the source of truth for the
-  per-change decision matrix.
+  full project — branch → ship → archive — locally and **fully automatically (no
+  confirmation, no per-change prompts)**, with halt-on-failure and idempotent
+  resume. Each change keeps the full workflow (branch, per-task commits, verify,
+  review) and merges into `main` **locally instead of opening a PR**. Per change,
+  decides mode from `openspec status` (apply+ship / spec+ship / ship-only /
+  repair+ship / archive-only / skip). The orchestrator owns branch creation
+  (`feat/<change>` from a clean `main`) and invokes the nested `ship-plan` /
+  `ship-code` workflows via the `workflow()` helper; `ship-code` implements every
+  open task **test-first** (Red→Green→one commit per pair) — there is no standalone
+  `/opsx:apply`. Sorted by cNNNN dependency order. Writes
+  `openspec/changes/.ship-all-progress.json` as durable state. Honors
+  `--from <cNNNN>`, `--only <list>`, `--dry-run` (opt-in plan-only), `--skip-spec`,
+  `--bump {patch|minor|major}`, `--push-main`, `--no-archive`, `--merge-strategy`,
+  `--force`. The skill `.claude/skills/openspec-ship-all/SKILL.md` is the source of
+  truth for the per-change decision matrix.
 
 Canonical (already-implemented) capabilities live as baseline specs in
 `openspec/specs/<capability>/spec.md`:
