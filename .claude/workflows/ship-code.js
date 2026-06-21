@@ -572,9 +572,10 @@ if (local) {
       const pr = await agent(
         [
           `Open a PR for change "${change}" (title: "${title}"). The feature branch "${branch}" holds the change's per-unit commits and has been merged into LOCAL "${base}" (origin/${base} is NOT updated, so a PR ${branch} → ${base} shows the full change diff). Use Bash (git + gh). ${skillNote('PR')}`,
+          `0. TARGET THE ORIGIN REPO, NOT AN UPSTREAM PARENT. This repo may be a fork — gh defaults PRs to the parent. Compute the origin slug: REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner) (or parse "git remote get-url origin"). Pass --repo "$REPO" to every gh pr command so the PR is opened on origin (e.g. minhlucncc/mework), never the upstream.`,
           `1. Push the branch: git push -u origin "${branch}". If origin is missing or the push fails, set prCreated=false, prReason=<error>, prUrl=null and STOP (NON-FATAL — the local merge already happened; just report it).`,
-          `2. Reuse-or-create: gh pr view "${branch}" --json url,state 2>/dev/null. If an OPEN PR already exists, reuse its url (prCreated=false, prReason="exists"). Otherwise create one:`,
-          `   gh pr create --base "${base}" --head "${branch}" --title "feat: ${title} (${change})" --body "<2-4 sentence summary drawn from ${pre.proposalPath || 'the proposal'}. Then: 'Local-merged into ${base} at ${mergeResult.mergeSha}; archived to ${archived.archivePath || '(no-archive)'}. Evidence: ${evDir}.' and a final line 'Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>'>"`,
+          `2. Reuse-or-create: gh pr view "${branch}" --repo "$REPO" --json url,state 2>/dev/null. If an OPEN PR already exists, reuse its url (prCreated=false, prReason="exists"). Otherwise create one:`,
+          `   gh pr create --repo "$REPO" --base "${base}" --head "${branch}" --title "feat: ${title} (${change})" --body "<2-4 sentence summary drawn from ${pre.proposalPath || 'the proposal'}. Then: 'Local-merged into ${base} at ${mergeResult.mergeSha}; archived to ${archived.archivePath || '(no-archive)'}. Evidence: ${evDir}.' and a final line 'Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>'>"`,
           `3. Capture the resulting PR url. Return { prCreated, prUrl, prReason }. Do NOT merge or close the PR, and do NOT delete the branch here.`,
         ].join('\n'),
         {
