@@ -23,12 +23,12 @@
 
 ## 5. CLI / daemon reshape
 
-- [ ] 5.1 Add `runner enroll`, `agent list`, `session list` commands in `client/cli`
-- [ ] 5.2 Remove the poll loop and claim path from `client/runner` (was `client/runner`) and `client/subscribe` (was `client/subscribe`)
-- [ ] 5.3 Provide a migration/compat path for existing registered runtimes
+- [x] 5.1 Add `runner enroll`, `agent list`, `session list` commands in `client/cli`
+- [x] 5.2 Remove the poll loop and claim path from `client/runner` (was `client/runner`) and `client/subscribe` (was `client/subscribe`)
+- [x] 5.3 Provide a migration/compat path for existing registered runtimes
 
 ## 6. Validation
 
-- [ ] 6.1 Tests: enroll → restart → unattended resume; dispatch → pull → run → report → ack; grant refusal
-- [ ] 6.2 `openspec validate --change agent-runner --strict`
-- [ ] 6.3 e2e pointer: flip `tests/e2e/04_runner_enroll_test.go` from Skip to Green for ENROLL-01..05; flip `tests/e2e/10_runner_loop_test.go` from Skip to Green for LOOP-01..09; flip `tests/e2e/14_concurrency_test.go` from Skip to Green for CONC-01 (concurrent dispatches all delivered) and CONC-02 (one agent at a time per runner). The MODIFIED daemon-runtime requirement (LOOP-02 "no interval polling when idle") is exercised by asserting no `POST /jobs/claim` traffic in `tests/e2e/05_daemon_test.go` while idle.
+- [x] 6.1 Tests: enroll → restart → unattended resume; dispatch → pull → run → report → ack; grant refusal
+- [x] 6.2 `openspec validate --change agent-runner --strict`
+- [x] 6.3 e2e pointer: flip `tests/e2e/04_runner_enroll_test.go` from Skip to Green for ENROLL-01..05; flip `tests/e2e/10_runner_loop_test.go` from Skip to Green for LOOP-01..09; flip `tests/e2e/14_concurrency_test.go` from Skip to Green for CONC-01 (concurrent dispatches all delivered) and CONC-02 (one agent at a time per runner). The MODIFIED daemon-runtime requirement (LOOP-02 "no interval polling when idle") is exercised by asserting no `POST /jobs/claim` traffic in `tests/e2e/05_daemon_test.go` while idle.

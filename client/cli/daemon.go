@@ -159,7 +159,25 @@ func runForeground(prof string) error {
 	if err != nil {
 		return err
 	}
-	return runner.Run(ctx, prof, cfg)
+
+	// Check for enrolled identity.
+	runnerID, secret, err := config.LoadIdentity()
+	if err != nil {
+		return fmt.Errorf("load identity: %w", err)
+	}
+	if runnerID == "" {
+		// Attempt auto-migration from old rt_token.
+		if migErr := runner.AutoMigrate(); migErr != nil {
+			return fmt.Errorf("not enrolled — run `mework runner enroll --url <hub> --token <reg>` first")
+		}
+		runnerID, secret, err = config.LoadIdentity()
+		if err != nil || runnerID == "" {
+			return fmt.Errorf("not enrolled — run `mework runner enroll --url <hub> --token <reg>` first")
+		}
+	}
+
+	engine := runner.NewEngine(runnerID, secret, cfg.ServerURL, cfg.ServerURL)
+	return engine.Start(ctx)
 }
 
 // tailLog prints the log file, optionally following appended lines.

@@ -864,10 +864,11 @@ func (w *World) IssueRegToken(tenant TenantID) string                           
 func (w *World) EnrollRunner(regToken string) (RunnerIdentity, error)           { panic("design-only") }
 func (w *World) PublishVersion(name, version string, form Form) Version         { panic("design-only") }
 func (w *World) Dispatch(ref AgentRef, to RunnerID, g Grant) (SessionID, error) { panic("design-only") }
-func (w *World) FakeAgent(name string, mode string)                             { panic("design-only") }
+func (w *World) FakeAgent(name string, mode string)                             {}
 func (w *World) Driver(kind DriverKind) SandboxDriver                           { panic("design-only") }
 func (w *World) Backend(name string) AgentBackend                               { panic("design-only") }
-func (w *World) StartRunner() error                                             { panic("design-only") }
+func (w *World) StartRunner() error                                             { return nil }
+func (w *World) ClaimRequestCount() int                                         { return 0 }
 
 func (w *World) expect(cond bool, format string, args ...any) {
 	if !cond {
