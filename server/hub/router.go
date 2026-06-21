@@ -18,6 +18,7 @@ import (
 	melloprovider "mework/server/provider/mello"
 	"mework/server/registry"
 	"mework/server/webhook"
+	"mework/shared/grant"
 )
 
 // Server holds the server state, router, and configuration.
@@ -121,10 +122,13 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		r.Post("/agents/{name}/dispatch", agentHandlers.Dispatch)
 	})
 
-	// Agent pull route under runtime auth (transport route).
+	// Agent pull route under runtime auth (transport route) + grant enforcement.
 	r.Route("/api/v1/agents", func(r chi.Router) {
 		r.Use(runtimeAuth.Middleware)
-		r.Get("/{name}/versions/{version}/pull", agentHandlers.PullVersion)
+		r.With(
+			middleware.GrantMiddleware([]byte(cfg.ServerKey)),
+			middleware.RequireOperation(grant.OpPullAgent),
+		).Get("/{name}/versions/{version}/pull", agentHandlers.PullVersion)
 	})
 
 	return &Server{

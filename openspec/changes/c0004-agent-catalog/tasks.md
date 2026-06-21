@@ -23,11 +23,11 @@
 
 ## 5. Auth integration
 
-- [ ] 5.1 Extend authentication so grants attach to runner/agent/session identities
-- [ ] 5.2 Enforce that operations outside the current dispatch's grant are denied even for authenticated callers
+- [x] 5.1 Extend authentication so grants attach to runner/agent/session identities
+- [x] 5.2 Enforce that operations outside the current dispatch's grant are denied even for authenticated callers
 
 ## 6. Validation
 
 - [x] 6.1 Tests: publish/immutability, resolve `@latest`, authorized vs unauthorized pull, dispatch carries grant
-- [ ] 6.2 `openspec validate --change agent-catalog --strict`
-- [ ] 6.3 e2e pointer: flip `tests/e2e/09_agent_catalog_test.go` from Skip to Green for CAT-01..10, and `tests/e2e/02_auth_grants_test.go` AUTH-07/08 (runner credential + grant-scoped operations) and GRANT-01..03 (tampered/absent/per-run-scope grants).
+- [x] 6.2 `openspec validate --change agent-catalog --strict`
+- [x] 6.3 e2e pointer: flip `tests/e2e/09_agent_catalog_test.go` from Skip to Green for CAT-01..10, and `tests/e2e/02_auth_grants_test.go` AUTH-07/08 (runner credential + grant-scoped operations) and GRANT-01..03 (tampered/absent/per-run-scope grants).
