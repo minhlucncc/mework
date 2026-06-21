@@ -67,36 +67,29 @@ type Notifier interface {
 	Notify(ctx context.Context, channel string, title, body string) error
 }
 
-// Event is a single event delivered on a session control channel.
-type Event struct {
-	ID      string
-	Payload []byte
-}
+// Scheduler manages time-based dispatches of agents. Each schedule produces
+// dispatch messages through the catalog/orchestrator when its fire time arrives.
+type Scheduler interface {
+	// Schedule creates a new schedule from the given spec and returns its ID.
+	// The schedule is created in the active state and begins firing immediately.
+	Schedule(ctx context.Context, tenantID string, spec core.ScheduleSpec) (string, error)
 
-// Session is the live wire endpoint of a session — a control channel plus
-// the ability to push messages to the sandbox. It is the value Attach returns.
-type Session interface {
-	// ID returns the session's unique identifier.
-	ID() core.SessionID
-	// Events returns a channel that delivers control events for this session.
-	Events() <-chan Event
-	// Push sends a message payload to the sandbox.
-	Push(ctx context.Context, payload []byte) error
-	// Close terminates the live endpoint.
-	Close() error
-}
+	// Pause suppresses fires for the given schedule without discarding it.
+	// A paused schedule never fires; Pause is idempotent.
+	Pause(ctx context.Context, tenantID, scheduleID string) error
 
-// SessionManager owns the session lifecycle (separate from the bus Session
-// primitive, which is the live wire endpoint Attach returns).
-type SessionManager interface {
-	// Create creates a new tracked session from the given agent/runner params.
-	Create(ctx context.Context, agentName, agentVersion, runnerID string, owner core.AccountID, tenant core.TenantID) (core.SessionInfo, error)
-	// Get returns the current SessionInfo for a session.
-	Get(ctx context.Context, id core.SessionID) (core.SessionInfo, error)
-	// List returns all sessions scoped to a tenant.
-	List(ctx context.Context, tenant core.TenantID) ([]core.SessionInfo, error)
-	// Attach returns the live wire endpoint for an existing session.
-	Attach(ctx context.Context, id core.SessionID) (Session, error)
-	// Close terminates a session and destroys its sandbox.
-	Close(ctx context.Context, id core.SessionID) error
+	// Resume re-arms a paused schedule so it becomes eligible to fire again.
+	// Resume is idempotent.
+	Resume(ctx context.Context, tenantID, scheduleID string) error
+
+	// Cancel permanently removes a schedule. A canceled schedule never fires.
+	// Cancel is idempotent; canceling a removed schedule returns no error.
+	Cancel(ctx context.Context, tenantID, scheduleID string) error
+
+	// List returns all non-canceled schedule IDs for the given tenant.
+	// Results are scoped to the tenant; cross-tenant visibility is forbidden.
+	List(ctx context.Context, tenantID string) ([]string, error)
+
+	// Get returns the schedule spec and state for a given schedule ID.
+	Get(ctx context.Context, tenantID, scheduleID string) (*core.ScheduleSpec, core.ScheduleState, error)
 }

@@ -17,6 +17,7 @@ import (
 	"mework/server/provider"
 	melloprovider "mework/server/provider/mello"
 	"mework/server/registry"
+	"mework/server/scheduler"
 	"mework/server/webhook"
 	"mework/shared/grant"
 )
@@ -53,11 +54,12 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 	}
 
 	agentHandlers := catalog.NewAgentHandlers(profileSvc, msgBroker)
+	schedulerSvc := scheduler.NewService(pool, agentHandlers)
+	schedulerHandlers := scheduler.NewHandlers(schedulerSvc)
+	schedulerSvc.Start()
+
 	sseHandler := bus.NewSSEHandler(msgBroker)
 	msgAckHandler := bus.NewAckHandler(msgBroker)
-
-	runEventsSvc := orchestrator.NewRunEventsService(msgBroker)
-	runEventsHandlers := orchestrator.NewRunEventsHandlers(runEventsSvc)
 
 	webhookHandler := webhook.NewHandler(pool, msgBroker, cfg.MeworkSecretKey, cfg.MelloBaseURL)
 
@@ -102,9 +104,12 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 
 		r.Post("/runners/registration-tokens", registryHandlers.IssueRegistrationToken)
 
-		r.Get("/runs/{runID}/status", runEventsHandlers.Status)
-		r.Post("/runs/{runID}/cancel", runEventsHandlers.Cancel)
-		r.Post("/runs/{runID}/events", runEventsHandlers.Emit)
+		r.Post("/schedules", schedulerHandlers.CreateSchedule)
+		r.Get("/schedules", schedulerHandlers.ListSchedules)
+		r.Get("/schedules/{id}", schedulerHandlers.GetSchedule)
+		r.Post("/schedules/{id}/pause", schedulerHandlers.PauseSchedule)
+		r.Post("/schedules/{id}/resume", schedulerHandlers.ResumeSchedule)
+		r.Post("/schedules/{id}/cancel", schedulerHandlers.CancelSchedule)
 	})
 
 	r.Post("/api/v1/runners/enroll", registryHandlers.EnrollRunner)
