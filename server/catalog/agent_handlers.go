@@ -14,6 +14,7 @@ import (
 
 	"mework/server/bus"
 	"mework/shared/grant"
+	"mework/shared/ports"
 )
 
 // AgentHandlers provides HTTP handlers for agent catalog operations.
@@ -22,6 +23,10 @@ import (
 type AgentHandlers struct {
 	service *Service
 	broker  bus.Broker
+
+	// selector is an optional RunnerSelector used for load-balanced dispatch
+	// when the request does not specify an explicit target runner.
+	selector ports.RunnerSelector
 
 	mu       sync.RWMutex
 	agents   map[string]*Agent
@@ -32,9 +37,16 @@ type AgentHandlers struct {
 // When the DB-backed service is not available (nil pool), the in-memory
 // store is used. A few well-known agents are pre-populated for testing.
 func NewAgentHandlers(svc *Service, broker bus.Broker) *AgentHandlers {
+	return NewAgentHandlersWithSelector(svc, broker, nil)
+}
+
+// NewAgentHandlersWithSelector creates a new AgentHandlers instance with an
+// optional RunnerSelector for load-balanced dispatch.
+func NewAgentHandlersWithSelector(svc *Service, broker bus.Broker, selector ports.RunnerSelector) *AgentHandlers {
 	h := &AgentHandlers{
 		service:  svc,
 		broker:   broker,
+		selector: selector,
 		agents:   make(map[string]*Agent),
 		versions: make(map[string][]*AgentVersion),
 	}
@@ -326,8 +338,17 @@ func (h *AgentHandlers) versionContent(v *AgentVersion) map[string]any {
 
 // DispatchRequest is the JSON body for the dispatch HTTP endpoint.
 type DispatchRequest struct {
-	Target string           `json:"target"`
-	Grant  *json.RawMessage `json:"grant,omitempty"`
+	// Target is an explicit runner ID. When empty and a RunnerSelector
+	// is configured, selection is automatic.
+	Target string `json:"target,omitempty"`
+
+	// SessionID for session-affinity routing.
+	SessionID string `json:"session_id,omitempty"`
+
+	// TenantID selects the tenant scope for runner selection.
+	TenantID string `json:"tenant_id,omitempty"`
+
+	Grant *json.RawMessage `json:"grant,omitempty"`
 }
 
 // Dispatch handles POST /api/v1/agents/{name}/dispatch.
@@ -360,7 +381,31 @@ func (h *AgentHandlers) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.DispatchToRunner(r.Context(), name, req.Target, g); err != nil {
+	// Resolve target runner.
+	target := req.Target
+	if target == "" && h.selector != nil {
+		criteria := ports.SelectionCriteria{
+			AgentRef:  name,
+			SessionID: req.SessionID,
+		}
+		selectedRunner, err := h.selector.Select(r.Context(), req.TenantID, criteria)
+		if err != nil {
+			if errors.Is(err, ports.ErrNoEligibleRunner) {
+				http.Error(w, "No eligible runner available for dispatch; requeue", http.StatusServiceUnavailable)
+				return
+			}
+			http.Error(w, "Runner selection failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		target = selectedRunner
+	}
+
+	if target == "" {
+		http.Error(w, "Bad Request: no target runner specified and no runner selector configured", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.DispatchToRunner(r.Context(), name, target, g); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

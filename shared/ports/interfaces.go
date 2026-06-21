@@ -5,8 +5,20 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"io"
 	"mework/shared/core"
+)
+
+// Sentinel errors for the RunnerSelector and SecretInjector ports.
+var (
+	// ErrNoEligibleRunner is returned by RunnerSelector.Select when no runner
+	// is eligible for the dispatch.
+	ErrNoEligibleRunner = errors.New("no eligible runner found for dispatch")
+
+	// ErrSecretRefused is returned by SecretInjector.Inject when a secret's
+	// source is not within the dispatch's grant scope.
+	ErrSecretRefused = errors.New("secret source not in grant scope")
 )
 
 // SandboxDriver manages the lifecycle of sandbox environments.
@@ -65,4 +77,39 @@ type ProviderAdapter interface {
 // Notifier sends notifications through various channels.
 type Notifier interface {
 	Notify(ctx context.Context, channel string, title, body string) error
+}
+
+// SelectionCriteria defines what to select a runner for.
+type SelectionCriteria struct {
+	// AgentRef is the agent that the dispatch will run.
+	AgentRef string
+	// SessionID, if set, requests session-affinity routing.
+	SessionID string
+}
+
+// RunnerSelector selects a target runner for a dispatch, load-balancing
+// across eligible online runners and honouring session affinity.
+type RunnerSelector interface {
+	// Select returns the ID of the best eligible runner for the given
+	// tenant and selection criteria. Returns ErrNoEligibleRunner when
+	// no runner is eligible.
+	Select(ctx context.Context, tenant string, criteria SelectionCriteria) (string, error)
+}
+
+// SecretRef identifies a single secret to inject into a sandbox.
+type SecretRef struct {
+	// Name is the logical name of the secret (e.g. "API_KEY").
+	Name string
+	// Source is the grant source that scopes this secret (e.g. "github" or "openai").
+	Source string
+}
+
+// SecretInjector delivers grant-scoped secrets into a provisioned sandbox
+// out-of-band (env / file), never via argv or logs.
+type SecretInjector interface {
+	// Inject materialises each secret as a per-sandbox file with 0400
+	// permissions and exposes it via an env var whose name is grant-scoped.
+	// Each secret's Source must be in the provided sources list; otherwise
+	// ErrSecretRefused is returned and the sandbox is aborted.
+	Inject(ctx context.Context, sandboxID string, sources []string, secrets []SecretRef) error
 }

@@ -52,7 +52,7 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		msgBroker = memory.New()
 	}
 
-	agentHandlers := catalog.NewAgentHandlers(profileSvc, msgBroker)
+	agentHandlers := catalog.NewAgentHandlersWithSelector(profileSvc, msgBroker, orchestrator.NewRunnerSelector())
 	sseHandler := bus.NewSSEHandler(msgBroker)
 	msgAckHandler := bus.NewAckHandler(msgBroker)
 
