@@ -62,8 +62,80 @@ type Result struct {
 
 // Workspace is a synced working directory for an agent run.
 type Workspace struct {
-	ID   string
-	Path string
+	ID      string
+	Path    string
+	Spec    *WorkspaceSpec
+	Session *Session
+}
+
+// WorkspaceMode indicates whether a mount is read-write or read-only.
+type WorkspaceMode string
+
+const (
+	WorkspaceModeRW WorkspaceMode = "rw"
+	WorkspaceModeRO WorkspaceMode = "ro"
+)
+
+// SyncMode controls when workspace changes are pushed to the remote object store.
+type SyncMode string
+
+const (
+	SyncModeContinuous SyncMode = "continuous"
+	SyncModeOnFlush    SyncMode = "on_flush"
+	SyncModeManual     SyncMode = "manual"
+)
+
+// BaseKind is the type of base source for a workspace.
+type BaseKind string
+
+const (
+	BaseKindGit     BaseKind = "git"
+	BaseKindArchive BaseKind = "archive"
+	BaseKindStore   BaseKind = "store"
+)
+
+// BaseSpec describes how to materialize the workspace base before the agent runs.
+type BaseSpec struct {
+	Kind BaseKind
+	Ref  string // URL (git) or object-store ref (archive, store)
+	Rev  string // git revision (branch, tag, commit); empty means default
+}
+
+// HookStage identifies a point in the workspace lifecycle where hooks run.
+type HookStage string
+
+const (
+	HookStageInit     HookStage = "init"
+	HookStagePreRun   HookStage = "pre_run"
+	HookStagePostRun  HookStage = "post_run"
+	HookStagePreSync  HookStage = "pre_sync"
+	HookStagePostSync HookStage = "post_sync"
+)
+
+// HookResult captures the outcome of a lifecycle hook execution.
+type HookResult struct {
+	Stage    HookStage
+	ExitCode int
+	Output   string
+	Error    string
+}
+
+// SyncResult captures the outcome of a sync operation.
+type SyncResult struct {
+	Pushed int
+	Pulled int
+	Failed int
+}
+
+// WorkspaceSpec describes how to create and manage a workspace for a session.
+type WorkspaceSpec struct {
+	MountPath    string
+	RemotePrefix string
+	Mode         WorkspaceMode
+	Sync         SyncMode
+	SharedRoots  []string
+	Base         *BaseSpec
+	Hooks        []Hook
 }
 
 // ObjectRef identifies an object in an object store (bucket + key).
@@ -83,6 +155,7 @@ type ObjectInfo struct {
 type Hook struct {
 	Name   string
 	Script string
+	Stage  HookStage
 }
 
 // SandboxCaps describes what a sandbox engine can do.

@@ -36,6 +36,9 @@ const (
 	OpRepoWrite   Operation = "repo.write"
 	OpNetwork     Operation = "network"
 	OpWriteBack   Operation = "writeback"
+	OpWorkspaceRead  Operation = "workspace.read"
+	OpWorkspaceWrite Operation = "workspace.write"
+	OpWorkspacePush  Operation = "workspace.push"
 )
 
 // Grant is a signed set of operations and optional scope restrictions.

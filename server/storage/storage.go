@@ -1,16 +1,12 @@
-// Package storage defines the server-side object storage abstraction and
-// provides the Store interface (a subset of ports.ObjectStore) and
-// configuration types for selecting the backend driver.
+// Package storage defines the object-store interface for server-side blob
+// storage. It wraps the ObjectStore port from shared/ports. It also defines
+// the WorkspaceManager for lifecycle management of session workspaces.
 //
-// Drivers live in subpackages (s3, minio, r2, fs) and are selected via
-// the Driver field of Config. Consumers import storage.Store and never
-// a concrete driver package.
+// This is a stub — the full implementation lands in a downstream change.
 package storage
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"time"
 
@@ -19,74 +15,48 @@ import (
 
 // Store is the server's object storage interface.
 type Store interface {
-	PutObject(ctx context.Context, ref core.ObjectRef, reader io.Reader) error
-	GetObject(ctx context.Context, ref core.ObjectRef) (io.ReadCloser, error)
-	HeadObject(ctx context.Context, ref core.ObjectRef) (core.ObjectInfo, error)
-	ListObjects(ctx context.Context, prefix string) ([]core.ObjectInfo, error)
-	DeleteObject(ctx context.Context, ref core.ObjectRef) error
-	PresignGetURL(ctx context.Context, ref core.ObjectRef, ttl time.Duration) (string, time.Time, error)
-	PresignPutURL(ctx context.Context, ref core.ObjectRef, ttl time.Duration) (string, time.Time, error)
-	PutMultipart(ctx context.Context, ref core.ObjectRef, parts []io.Reader) (string, error)
+	Put(ctx context.Context, ref core.ObjectRef, reader io.Reader) error
+	Get(ctx context.Context, ref core.ObjectRef) (io.ReadCloser, error)
+	Delete(ctx context.Context, ref core.ObjectRef) error
+	List(ctx context.Context, prefix string) ([]core.ObjectInfo, error)
 }
 
-// DriverName enumerates supported storage backends.
-type DriverName string
-
-const (
-	DriverFS    DriverName = "fs"
-	DriverS3    DriverName = "s3"
-	DriverMinIO DriverName = "minio"
-	DriverR2    DriverName = "r2"
-)
-
-// S3Credentials holds the access key and secret key for S3-compatible backends.
-type S3Credentials struct {
-	AccessKey string
-	SecretKey string
+// WorkspaceStatus reports the observable state of a workspace session.
+type WorkspaceStatus struct {
+	SessionID     string
+	LastSyncTime  time.Time
+	PushedCount   int
+	PulledCount   int
+	FailedCount   int
+	PendingWrites int
+	SyncMode      core.SyncMode
 }
 
-// Config selects the storage backend and provides connection details.
-type Config struct {
-	// Driver selects the backend: "fs", "s3", "minio", or "r2".
-	Driver DriverName
-
-	// Endpoint is the S3-compatible endpoint URL (e.g. "https://s3.amazonaws.com").
-	// For the fs driver this is empty.
-	Endpoint string
-
-	// Region is the AWS region (e.g. "us-east-1").
-	Region string
-
-	// Bucket is the default bucket name for object operations.
-	Bucket string
-
-	// Credentials for S3-compatible backends.
-	Credentials S3Credentials
-
-	// BasePath is the local filesystem root for the fs driver.
-	// When empty, NewStore uses a temporary directory.
-	BasePath string
+// WorkspaceSession represents a live workspace mount bound to an object-store prefix.
+type WorkspaceSession struct {
+	ID        string
+	Spec      core.WorkspaceSpec
+	MountPath string
+	Status    WorkspaceStatus
 }
 
-// ErrUnsupportedDriver is returned when Config.Driver does not name a known backend.
-var ErrUnsupportedDriver = errors.New("unsupported storage driver")
-
-// Factory is a function that creates a Store from Config.
-type Factory func(Config) (Store, error)
-
-var drivers = make(map[DriverName]Factory)
-
-// Register registers a storage driver factory for the given driver name.
-// Called from driver init() functions.
-func Register(name DriverName, fn Factory) {
-	drivers[name] = fn
-}
-
-// NewStore creates a Store from config by selecting the appropriate driver.
-func NewStore(cfg Config) (Store, error) {
-	fn, ok := drivers[cfg.Driver]
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnsupportedDriver, cfg.Driver)
-	}
-	return fn(cfg)
+// WorkspaceManager manages the lifecycle of object-store-backed workspaces.
+//
+// Attach binds a session-scoped folder to a remote prefix and mounts it
+// read-write at the spec's mount path. Detach performs a final flush then
+// unmounts. Sync pushes/pulls against the ObjectStore. Status reports
+// observable sync state. MountSharedRoot mounts a read-only union of
+// published folders. Publish promotes the grant-allowed sub-path into
+// the shared namespace. Bootstrap materializes the BaseSpec and runs
+// init hooks. RunHooks drives the given lifecycle HookStage.
+type WorkspaceManager interface {
+	Attach(ctx context.Context, spec core.WorkspaceSpec) (*WorkspaceSession, error)
+	Get(ctx context.Context, sessionID string) (*WorkspaceSession, error)
+	Detach(ctx context.Context, sessionID string) error
+	Sync(ctx context.Context, sessionID string) (*core.SyncResult, error)
+	Status(ctx context.Context, sessionID string) (*WorkspaceStatus, error)
+	MountSharedRoot(ctx context.Context, sessionID string, rootPath string) error
+	Publish(ctx context.Context, sessionID string, sourcePath string, destName string) error
+	Bootstrap(ctx context.Context, sessionID string) (*core.HookResult, error)
+	RunHooks(ctx context.Context, sessionID string, stage core.HookStage) (*core.HookResult, error)
 }
