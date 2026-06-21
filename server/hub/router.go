@@ -59,6 +59,8 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 	if msgBroker == nil {
 		msgBroker = memory.New()
 	}
+
+	agentHandlers := catalog.NewAgentHandlers(profileSvc, msgBroker)
 	sseHandler := bus.NewSSEHandler(msgBroker)
 	msgAckHandler := bus.NewAckHandler(msgBroker)
 
@@ -111,6 +113,18 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		r.Get("/profiles/{name}", profileHandlers.GetProfile)
 		r.Put("/profiles/{name}", profileHandlers.UpdateProfile)
 		r.Delete("/profiles/{name}", profileHandlers.DeleteProfile)
+
+		// Agent catalog management routes (PAT auth)
+		r.Post("/agents/{name}/versions", agentHandlers.PublishVersion)
+		r.Get("/agents", agentHandlers.ListAgents)
+		r.Get("/agents/{name}", agentHandlers.ResolveAgent)
+		r.Post("/agents/{name}/dispatch", agentHandlers.Dispatch)
+	})
+
+	// Agent pull route under runtime auth (transport route).
+	r.Route("/api/v1/agents", func(r chi.Router) {
+		r.Use(runtimeAuth.Middleware)
+		r.Get("/{name}/versions/{version}/pull", agentHandlers.PullVersion)
 	})
 
 	return &Server{

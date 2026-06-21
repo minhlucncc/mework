@@ -159,6 +159,24 @@ func (s *Service) SetChannelPointer(ctx context.Context, agentID, channel, versi
 	return nil
 }
 
+// LookupAgentByName returns an agent by its name.
+func (s *Service) LookupAgentByName(ctx context.Context, name string) (*Agent, error) {
+	if s.pool == nil {
+		return nil, ErrNotFound
+	}
+	var a Agent
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, name, description, created_at FROM agents WHERE name = $1
+	`, name).Scan(&a.ID, &a.Name, &a.Description, &a.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("lookup agent by name: %w", err)
+	}
+	return &a, nil
+}
+
 // ListAgents returns all agent catalog entries.
 func (s *Service) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.pool.Query(ctx, `
