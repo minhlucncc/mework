@@ -6,20 +6,20 @@
 
 ## 2. Subscription & presence
 
-- [ ] 2.1 Open the SSE subscription to the runner's topics on `daemon start` (via `message-bus` client)
-- [ ] 2.2 Maintain presence/heartbeat over the channel; surface online/offline to the hub
-- [ ] 2.3 Reconnect with jittered backoff and `Last-Event-ID` resume
+- [x] 2.1 Open the SSE subscription to the runner's topics on `daemon start` (via `message-bus` client)
+- [x] 2.2 Maintain presence/heartbeat over the channel; surface online/offline to the hub
+- [x] 2.3 Reconnect with jittered backoff and `Last-Event-ID` resume
 
 ## 3. Pull-run-report loop
 
-- [ ] 3.1 On dispatch: resolve + pull the referenced agent version from the catalog
-- [ ] 3.2 Run it via the sandbox runtime (handoff to `sandbox-runtime`)
-- [ ] 3.3 Report terminal result (done/failed + summary) over POST; acknowledge the dispatch
+- [x] 3.1 On dispatch: resolve + pull the referenced agent version from the catalog
+- [x] 3.2 Run it via the sandbox runtime (handoff to `sandbox-runtime`)
+- [x] 3.3 Report terminal result (done/failed + summary) over POST; acknowledge the dispatch
 
 ## 4. Grant enforcement
 
-- [ ] 4.1 Parse and verify the grant carried by the dispatch (integrity-checked)
-- [ ] 4.2 Refuse operations outside the grant locally; report refusals
+- [x] 4.1 Parse and verify the grant carried by the dispatch (integrity-checked)
+- [x] 4.2 Refuse operations outside the grant locally; report refusals
 
 ## 5. CLI / daemon reshape
 
