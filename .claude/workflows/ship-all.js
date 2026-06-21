@@ -33,6 +33,8 @@ const force = !!A.force
 const date = A.date // YYYY-MM-DD — passed in
 const DATE = date || 'Unreleased'
 const PROGRESS_PATH = 'openspec/changes/.ship-all-progress.json'
+const REQUIRED_GO_MINOR = 25
+const TOOLCHAIN_NOTE = `TOOLCHAIN (do this FIRST, before any go/make/go test command): go.mod requires go 1.${REQUIRED_GO_MINOR}.x. Run \`go version\`; if it is older than 1.${REQUIRED_GO_MINOR} (a stale go on PATH such as /usr/local/go can shadow a newer one), locate a newer toolchain via \`which -a go\` and \`ls /opt/homebrew/bin/go /opt/homebrew/Cellar/go*/*/bin/go 2>/dev/null\`, then \`export PATH=<dir-of-the-1.${REQUIRED_GO_MINOR}+-go>:$PATH\` and re-check \`go version\` before continuing — make and go test inherit this PATH.`
 
 if (onlyChange) {
   for (const c of onlyChange) {
