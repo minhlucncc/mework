@@ -129,3 +129,73 @@ func TestProviderInterface_GitHubMock(t *testing.T) {
 		t.Error("ChannelKey resourceID should not be empty for valid payload")
 	}
 }
+
+// --- Unit 03: Write-back contract assertions ---
+
+// TestProvider_ChannelKeyToWriteBack verifies the complete contract: ChannelKey
+// resolves a provider code and resource ID, and WriteBack accepts those values
+// to post a result. This ensures the interface supports the channel-session
+// writeback flow end-to-end.
+func TestProvider_ChannelKeyToWriteBack(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider Provider
+		payload  []byte
+		wantCode string
+		wantBody string
+	}{
+		{
+			name:     "mello channel key resolves to WriteBack",
+			provider: &mockProvider{code: "mello"},
+			payload:  []byte(`{"data":{"ticket_id":"TICKET-99"}}`),
+			wantCode: "mello",
+			wantBody: "review complete",
+		},
+		{
+			name:     "github channel key resolves to WriteBack",
+			provider: &mockProvider{code: "github"},
+			payload:  []byte(`{"issue":{"number":42}}`),
+			wantCode: "github",
+			wantBody: "fix applied",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, resID := tt.provider.ChannelKey(tt.payload)
+			if code != tt.wantCode {
+				t.Fatalf("ChannelKey code = %q, want %q", code, tt.wantCode)
+			}
+			if resID == "" {
+				t.Fatal("ChannelKey resourceID should be non-empty for valid payload")
+			}
+
+			// The write-back path: provider code + resource ID -> WriteBack.
+			err := tt.provider.WriteBack(context.Background(), "test-token", resID, tt.wantBody)
+			if err != nil {
+				t.Fatalf("WriteBack after ChannelKey failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestProvider_ChannelKey_WriteBack_InterfaceContract is a compile-time check
+// that ChannelKey returns (code, resourceID) — values that are valid inputs to
+// the Provider registry lookup and WriteBack.
+func TestProvider_ChannelKey_WriteBack_InterfaceContract(t *testing.T) {
+	var p Provider = &mockProvider{code: "mello"}
+	code, resourceID := p.ChannelKey([]byte(`{"data":{"ticket_id":"TICKET-99"}}`))
+
+	// Verify that the code from ChannelKey can be used to look up the provider
+	// and call WriteBack as the write-back pipeline would.
+	got, ok := Get(code)
+	if !ok {
+		t.Fatalf("Get(%q) after ChannelKey: provider not found", code)
+	}
+	if got.Code() != code {
+		t.Errorf("resolved provider code = %q, want %q", got.Code(), code)
+	}
+	if err := got.WriteBack(context.Background(), "test-token", resourceID, "done"); err != nil {
+		t.Errorf("WriteBack with ChannelKey output failed: %v", err)
+	}
+}

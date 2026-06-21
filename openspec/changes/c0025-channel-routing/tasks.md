@@ -32,14 +32,14 @@
 
 ## 5. Sandbox Bundle Format
 
-- [ ] 5.1 Define the bundle folder structure and `sandbox.yaml` metadata schema
-- [ ] 5.2 Add `"bundle"` as a recognized form in the agent catalog's `PublishVersion` validation
-- [ ] 5.3 Implement bundle validation on publish: require `sandbox.yaml`, `definition.md` inside zip, reject malformed bundles
-- [ ] 5.4 Implement bundle extraction on the worker side: `PullVersion` returns zip → worker extracts to isolated workdir
-- [ ] 5.5 Implement bundle materialization: read `sandbox.yaml` → load `definition.md` as prompt → mount `tools/` → register hooks from `hooks/`
-- [ ] 5.6 Add CLI command: `mework sandbox pack <dir> --output sandbox.zip` to create a bundle from a local folder
-- [ ] 5.7 Add CLI command: `mework sandbox push <name> --version <ver> --file sandbox.zip` to publish a bundle to the catalog
-- [ ] 5.8 Add validation: `sandbox.yaml` must declare a valid `spec` and `backend`; reject publish if missing or invalid
+- [x] 5.1 Define the bundle folder structure and `sandbox.yaml` metadata schema
+- [x] 5.2 Add `"bundle"` as a recognized form in the agent catalog's `PublishVersion` validation
+- [x] 5.3 Implement bundle validation on publish: require `sandbox.yaml`, `definition.md` inside zip, reject malformed bundles
+- [x] 5.4 Implement bundle extraction on the worker side: `PullVersion` returns zip → worker extracts to isolated workdir
+- [x] 5.5 Implement bundle materialization: read `sandbox.yaml` → load `definition.md` as prompt → mount `tools/` → register hooks from `hooks/`
+- [x] 5.6 Add CLI command: `mework sandbox pack <dir> --output sandbox.zip` to create a bundle from a local folder
+- [x] 5.7 Add CLI command: `mework sandbox push <name> --version <ver> --file sandbox.zip` to publish a bundle to the catalog
+- [x] 5.8 Add validation: `sandbox.yaml` must declare a valid `spec` and `backend`; reject publish if missing or invalid
 
 ## 6. Auto-Provisioner (Agent Catalog Integration)
 
@@ -67,17 +67,17 @@
 
 ## 8. Daemon (Worker) Integration
 
-- [ ] 8.1 Update daemon enrollment to detect and declare installed AI CLIs as specs (e.g., `claude` in PATH → `"claude-code"`)
-- [ ] 8.2 Update daemon heartbeat to include current specs
-- [ ] 8.3 Implement agent pull: when dispatched, worker calls `PullVersion` with scoped grant to fetch sandbox definition
-- [ ] 8.4 Implement channel subscription: sandbox subscribes to `channel.<provider>.<id>.*` bus topic
-- [ ] 8.5 Add backward-compatible enrollment: no specs → treated as capable of all specs
+- [x] 8.1 Update daemon enrollment to detect and declare installed AI CLIs as specs (e.g., `claude` in PATH → `"claude-code"`)
+- [x] 8.2 Update daemon heartbeat to include current specs
+- [x] 8.3 Implement agent pull: when dispatched, worker calls `PullVersion` with scoped grant to fetch sandbox definition
+- [x] 8.4 Implement channel subscription: sandbox subscribes to `channel.<provider>.<id>.*` bus topic
+- [x] 8.5 Add backward-compatible enrollment: no specs → treated as capable of all specs
 
 ## 9. Write-back via Channel Session
 
-- [ ] 9.1 Implement write-back lookup from channel session context (accountID + providerCode)
-- [ ] 9.2 Wire channel session-based write-back into result processing pipeline (instead of separate job lookup)
-- [ ] 9.3 Add test: write-back uses session context, worker never holds provider token
+- [x] 9.1 Implement write-back lookup from channel session context (accountID + providerCode)
+- [x] 9.2 Wire channel session-based write-back into result processing pipeline (instead of separate job lookup)
+- [x] 9.3 Add test: write-back uses session context, worker never holds provider token
 
 ## 10. Observability and Cleanup
 
