@@ -1,8 +1,8 @@
 ## 1. Catalog persistence
 
-- [ ] 1.1 Add migration for `agents` (name) and `agent_versions` (immutable version, `form`, payload/reference, checksum)
-- [ ] 1.2 Model moving pointers (e.g. `latest`, named channels) resolvable to a concrete version
-- [ ] 1.3 Provide a migration mapping existing `profiles` to `definition`-form agents
+- [x] 1.1 Add migration for `agents` (name) and `agent_versions` (immutable version, `form`, payload/reference, checksum)
+- [x] 1.2 Model moving pointers (e.g. `latest`, named channels) resolvable to a concrete version
+- [x] 1.3 Provide a migration mapping existing `profiles` to `definition`-form agents
 
 ## 2. Catalog API
 
