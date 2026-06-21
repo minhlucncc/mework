@@ -22,13 +22,13 @@ import (
 // cancel can be observed, and counts Start so the test can assert the sandbox is
 // started exactly once for the whole session.
 type liveFakeSandbox struct {
-	mu          sync.Mutex
-	id          string
-	turns       []string // stdin content per Exec call, in order
-	argvs       [][]string
-	signals     []string // signals delivered via Signals(), e.g. "interrupt"
-	blockTurn   bool     // when true, Exec blocks until interrupted/cancelled
-	releaseCh   chan struct{}
+	mu        sync.Mutex
+	id        string
+	turns     []string // stdin content per Exec call, in order
+	argvs     [][]string
+	signals   []string // signals delivered via Signals(), e.g. "interrupt"
+	blockTurn bool     // when true, Exec blocks until interrupted/cancelled
+	releaseCh chan struct{}
 }
 
 func (s *liveFakeSandbox) ID() string { return s.id }
@@ -100,11 +100,11 @@ func (s *liveFakeSandbox) gotArgvs() [][]string {
 // liveFakeDriver hands back one shared liveFakeSandbox and counts Start/Destroy
 // so the test can assert "started once" and "destroyed on close/reap".
 type liveFakeDriver struct {
-	mu            sync.Mutex
-	startCalls    int
-	destroyCalls  int
-	sb            *liveFakeSandbox
-	blockTurn     bool
+	mu           sync.Mutex
+	startCalls   int
+	destroyCalls int
+	sb           *liveFakeSandbox
+	blockTurn    bool
 }
 
 func (d *liveFakeDriver) Caps() core.SandboxCaps { return core.SandboxCaps{DriverName: "live-fake"} }

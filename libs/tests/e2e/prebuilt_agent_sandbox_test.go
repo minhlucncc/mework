@@ -164,14 +164,14 @@ func sessionTopic(id core.SessionID) bus.Topic {
 // tenant. The runner.Session API publishes to a per-session topic, so the e2e
 // derives that id from the tenant-scoped list rather than reaching into the
 // session value.
-func onlySessionID(t *testing.T, sess *runnerpkg.Session) core.SessionID {
+func onlySessionID(t *testing.T, sess *runnerpkg.Session, caller runnerpkg.Caller) core.SessionID {
 	t.Helper()
-	list, err := sess.List(context.Background(), prebuiltTenant)
+	list, err := sess.List(context.Background(), caller)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
 	if len(list) != 1 {
-		t.Fatalf("expected exactly 1 session for tenant %q, got %d", prebuiltTenant, len(list))
+		t.Fatalf("expected exactly 1 session for tenant %q, got %d", caller.Tenant, len(list))
 	}
 	return list[0].ID
 }
@@ -250,7 +250,7 @@ func TestPrebuiltAgentSandbox_InteractiveSessionE2E(t *testing.T) {
 			t.Fatalf("status after open = %q, want %q", st, core.SessionActive)
 		}
 
-		sub, err := broker.Subscribe(ctx, "watcher", bus.Filter(sessionTopic(onlySessionID(t, sess))), "")
+		sub, err := broker.Subscribe(ctx, "watcher", bus.Filter(sessionTopic(onlySessionID(t, sess, caller))), "")
 		if err != nil {
 			t.Fatalf("subscribe: %v", err)
 		}
@@ -382,7 +382,7 @@ func TestPrebuiltAgentSandbox_EventStreamOrderingAndTailThenLive(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sess.Close(ctx, caller) })
 
-	topic := sessionTopic(onlySessionID(t, sess))
+	topic := sessionTopic(onlySessionID(t, sess, caller))
 
 	// First turn happens BEFORE the late subscriber attaches.
 	if err := sess.Send(ctx, caller, "first turn before subscribe"); err != nil {

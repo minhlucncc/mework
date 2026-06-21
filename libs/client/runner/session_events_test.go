@@ -10,6 +10,7 @@ import (
 	"mework/libs/server/bus/memory"
 	"mework/libs/server/session"
 	"mework/libs/shared/core"
+	"mework/libs/shared/grant"
 )
 
 // collectEvents drains a subscription's channel until a terminal (done/error)
@@ -214,21 +215,32 @@ func TestSessionEvents_StatusAndList(t *testing.T) {
 		t.Errorf("status = %q, want %q", st, core.SessionActive)
 	}
 
-	// List is tenant-scoped: the owner's tenant sees the session.
-	got, err := sess.List(ctx, testTenant)
+	// List is authorized + tenant-scoped: the owner sees its own tenant's session.
+	got, err := sess.List(ctx, caller)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("List(%q) returned %d sessions, want 1", testTenant, len(got))
+		t.Fatalf("List for tenant %q returned %d sessions, want 1", caller.Tenant, len(got))
 	}
 
-	// A different tenant sees none of it.
-	other, err := sess.List(ctx, core.TenantID("tenant-b"))
+	// A caller authenticated in a different tenant sees none of it — the tenant
+	// is derived from the caller, not a supplied argument, so it cannot be spoofed.
+	g, err := grant.NewGrant([]grant.Operation{grant.OpSpawn}, nil)
+	if err != nil {
+		t.Fatalf("new grant: %v", err)
+	}
+	otherCaller := Caller{Account: core.AccountID("acct-b"), Tenant: core.TenantID("tenant-b"), Grant: g}
+	other, err := sess.List(ctx, otherCaller)
 	if err != nil {
 		t.Fatalf("list other tenant: %v", err)
 	}
 	if len(other) != 0 {
-		t.Errorf("List(tenant-b) returned %d sessions, want 0 (tenant isolation)", len(other))
+		t.Errorf("List for tenant-b returned %d sessions, want 0 (tenant isolation)", len(other))
+	}
+
+	// A caller without a grant is denied (list is an authorized operation).
+	if _, err := sess.List(ctx, Caller{Account: testOwner, Tenant: testTenant}); err == nil {
+		t.Error("List without a grant should be denied")
 	}
 }

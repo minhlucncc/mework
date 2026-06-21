@@ -189,10 +189,15 @@ func (s *Session) Status(ctx context.Context, caller Caller) (core.SessionStatus
 	return info.Status, nil
 }
 
-// List returns the sessions visible to the given tenant. It is tenant-scoped: a
-// caller only ever sees its own tenant's sessions.
-func (s *Session) List(ctx context.Context, tenant core.TenantID) ([]core.SessionInfo, error) {
-	return s.deps.Sessions.List(ctx, tenant)
+// List returns the sessions belonging to the caller's own tenant. It is
+// authorized (grant-verified) and tenant-scoped: the tenant is taken from the
+// authenticated caller — never a caller-supplied argument — so a caller can only
+// ever see its own tenant's sessions.
+func (s *Session) List(ctx context.Context, caller Caller) ([]core.SessionInfo, error) {
+	if err := authorize(caller, grant.OpSpawn, s.deps.GrantKey); err != nil {
+		return nil, err
+	}
+	return s.deps.Sessions.List(ctx, caller.Tenant)
 }
 
 // destroySandbox tears down the long-lived sandbox exactly once.
