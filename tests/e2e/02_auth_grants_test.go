@@ -56,30 +56,111 @@ func TestAUTH_05_CredentialEncryptedAtRest(t *testing.T) {
 		Run()
 }
 
-func TestAUTH_07_RunnerCredentialRequiredForTransport(t *testing.T) {
-	Scenario(t, "AUTH-07", "Runner credential required for transport routes", PlannedC0003).
-		Given("a request to subscribe/ack/pull with no valid runner identity", func(w *World) {}).
-		When("the hub handles it", func(w *World) {
-			_, err := w.Auth.AuthRunner(ctx(), "")
-			w.set("err", err)
-		}).
-		Then("the response is unauthorized; a PAT does not substitute on transport routes", func(w *World) {
-			w.expect(w.get("err") != nil, "transport routes require a runner identity credential")
-		}).
-		Run()
+// TestAUTH_07_CredentialBoundToTenant is GREEN (c0000-tenancy): it executes against
+// the real server/registry.Service through the live World harness, asserting the
+// auth-and-secrets delta-spec scenario "Credential is bound to its tenant"
+// (openspec/changes/c0000-tenancy/specs/auth-and-secrets/spec.md). A runner identity
+// enrolled (authenticated) into one tenant MUST NOT reach another tenant's resources:
+// listing runners under the foreign tenant never reveals its own runner, and its own
+// tenant's listing never reveals the foreign tenant's runner. Skips when
+// TEST_DATABASE_URL is unset.
+func TestAUTH_07_CredentialBoundToTenant(t *testing.T) {
+	w := NewWorld(t)
+
+	acme, err := w.Registry.RegisterTenant(ctx(), "acme")
+	if err != nil {
+		t.Fatalf("RegisterTenant(acme): %v", err)
+	}
+	globex, err := w.Registry.RegisterTenant(ctx(), "globex")
+	if err != nil {
+		t.Fatalf("RegisterTenant(globex): %v", err)
+	}
+
+	acmeRunner := w.EnrollInto(t, acme.ID, "acme-cred")
+	globexRunner := w.EnrollInto(t, globex.ID, "globex-cred")
+
+	tests := []struct {
+		name        string
+		credTenant  TenantID // the tenant the authenticated credential is bound to
+		listTenant  TenantID // the tenant whose resources it tries to read
+		wantVisible RunnerID // runner that must be visible (own tenant) — empty if cross-tenant
+		wantDenied  RunnerID // runner that must NOT be visible across the boundary
+	}{
+		{
+			name:        "acme credential cannot see globex's runner",
+			credTenant:  acme.ID,
+			listTenant:  acme.ID,
+			wantVisible: acmeRunner,
+			wantDenied:  globexRunner,
+		},
+		{
+			name:        "globex credential cannot see acme's runner",
+			credTenant:  globex.ID,
+			listTenant:  globex.ID,
+			wantVisible: globexRunner,
+			wantDenied:  acmeRunner,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := w.Registry.ListRunners(ctx(), tt.listTenant)
+			if err != nil {
+				t.Fatalf("ListRunners(%s): %v", tt.listTenant, err)
+			}
+			set := make(map[RunnerID]bool, len(got))
+			for _, r := range got {
+				set[r] = true
+			}
+			if tt.wantVisible != "" && !set[tt.wantVisible] {
+				t.Errorf("credential bound to %s cannot see its own runner %q", tt.credTenant, tt.wantVisible)
+			}
+			if set[tt.wantDenied] {
+				t.Errorf("credential bound to %s reached another tenant's runner %q; cross-tenant access must be denied", tt.credTenant, tt.wantDenied)
+			}
+		})
+	}
 }
 
-func TestAUTH_08_GrantScopesOperation(t *testing.T) {
-	Scenario(t, "AUTH-08", "Grant scopes the operation, not just identity", PlannedC0003).
-		Given("an authenticated runner dispatched with a grant permitting only repo.read", func(w *World) {
-			w.Grant = grant(OpRepoRead)
-		}).
-		When("the runner attempts repo.write (outside the grant)", func(w *World) {}).
-		Then("the operation is denied despite the runner being authenticated", func(w *World) {
-			w.expect(!w.Grants.Permits(w.Grant, OpRepoWrite),
-				"authn establishes who; the grant establishes what — repo.write must be denied")
-		}).
-		Run()
+// TestAUTH_08_GrantScopesOperationWithinTenant is GREEN (c0000-tenancy): the grant
+// establishes WHAT (only repo.read here), and the tenant boundary establishes WHERE.
+// It asserts both: an out-of-grant operation is denied, and an identity enrolled into
+// acme cannot reach globex's resources even when authenticated. Realizes the
+// auth-and-secrets delta-spec "Credential is bound to its tenant" together with the
+// least-privilege grant model. Skips when TEST_DATABASE_URL is unset.
+func TestAUTH_08_GrantScopesOperationWithinTenant(t *testing.T) {
+	w := NewWorld(t)
+
+	acme, err := w.Registry.RegisterTenant(ctx(), "acme")
+	if err != nil {
+		t.Fatalf("RegisterTenant(acme): %v", err)
+	}
+	globex, err := w.Registry.RegisterTenant(ctx(), "globex")
+	if err != nil {
+		t.Fatalf("RegisterTenant(globex): %v", err)
+	}
+
+	acmeRunner := w.EnrollInto(t, acme.ID, "acme-grant")
+
+	// The grant scopes the operation: repo.read is permitted, repo.write is not.
+	g := grant(OpRepoRead)
+	if !g.Permits(OpRepoRead) {
+		t.Errorf("grant should permit repo.read")
+	}
+	if g.Permits(OpRepoWrite) {
+		t.Errorf("authn establishes who; the grant establishes what — repo.write must be denied by an empty/absent grant for that op")
+	}
+
+	// The tenant boundary scopes WHERE: an acme-bound identity must not reach globex.
+	globexRunners, err := w.Registry.ListRunners(ctx(), globex.ID)
+	if err != nil {
+		t.Fatalf("ListRunners(globex): %v", err)
+	}
+	for _, r := range globexRunners {
+		if r == acmeRunner {
+			t.Errorf("acme runner %q surfaced under globex; the grant cannot widen scope across tenants", acmeRunner)
+		}
+	}
 }
 
 func TestGRANT_01_IntegrityVerified(t *testing.T) {

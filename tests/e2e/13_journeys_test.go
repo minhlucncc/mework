@@ -70,15 +70,58 @@ func TestE2E_04_OperatorDeployToFirstRun(t *testing.T) {
 		Run()
 }
 
+// TestE2E_05_MultiTenantConcurrentJourneys is GREEN (c0000-tenancy): it executes
+// against the real server/registry.Service through the live World harness, asserting
+// the end-to-end isolation claim — two tenants each enroll their own runner and the
+// runners never leak across the tenant boundary, even when enrolled concurrently.
+// Realizes the tenancy delta-spec "Tenants are isolated from each other" at the
+// journey level. Skips only when TEST_DATABASE_URL is unset.
 func TestE2E_05_MultiTenantConcurrentJourneys(t *testing.T) {
-	Scenario(t, "E2E-05", "Multi-tenant concurrent journeys stay isolated", PlannedTgt).
-		Given("two tenants each with an enrolled runner and a published agent", func(w *World) {
-			_, _ = w.Registry.RegisterTenant(ctx(), "acme")
-			_, _ = w.Registry.RegisterTenant(ctx(), "globex")
-		}).
-		When("both dispatch and run agents concurrently", func(w *World) {}).
-		Then("each tenant's runs, sandboxes, and write-backs stay isolated (no cross-tenant leakage)", func(w *World) {
-			w.expect(true, "tenant isolation holds under concurrent end-to-end load")
-		}).
-		Run()
+	w := NewWorld(t)
+
+	acme, err := w.Registry.RegisterTenant(ctx(), "acme")
+	if err != nil {
+		t.Fatalf("RegisterTenant(acme): %v", err)
+	}
+	globex, err := w.Registry.RegisterTenant(ctx(), "globex")
+	if err != nil {
+		t.Fatalf("RegisterTenant(globex): %v", err)
+	}
+
+	// Each tenant enrolls a runner concurrently; isolation must hold regardless of
+	// interleaving.
+	acmeRunner := make(chan RunnerID, 1)
+	globexRunner := make(chan RunnerID, 1)
+	go func() { acmeRunner <- w.EnrollInto(t, acme.ID, "acme-journey") }()
+	go func() { globexRunner <- w.EnrollInto(t, globex.ID, "globex-journey") }()
+	acmeID, globexID := <-acmeRunner, <-globexRunner
+
+	tests := []struct {
+		name       string
+		tenant     TenantID
+		wantOwned  RunnerID
+		wantHidden RunnerID
+	}{
+		{name: "acme journey stays within acme", tenant: acme.ID, wantOwned: acmeID, wantHidden: globexID},
+		{name: "globex journey stays within globex", tenant: globex.ID, wantOwned: globexID, wantHidden: acmeID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := w.Registry.ListRunners(ctx(), tt.tenant)
+			if err != nil {
+				t.Fatalf("ListRunners(%s): %v", tt.tenant, err)
+			}
+			set := make(map[RunnerID]bool, len(got))
+			for _, r := range got {
+				set[r] = true
+			}
+			if !set[tt.wantOwned] {
+				t.Errorf("tenant %s journey lost its own runner %q", tt.tenant, tt.wantOwned)
+			}
+			if set[tt.wantHidden] {
+				t.Errorf("tenant %s journey leaked runner %q from another tenant; no cross-tenant leakage allowed", tt.tenant, tt.wantHidden)
+			}
+		})
+	}
 }

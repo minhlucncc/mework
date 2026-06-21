@@ -22,11 +22,18 @@ type contextKey string
 const (
 	AccountIDKey contextKey = "account_id"
 	PATTokenKey  contextKey = "pat_token"
+	TenantIDKey  contextKey = "tenant_id"
 )
 
 // GetAccountID retrieves the account ID from the request context.
 func GetAccountID(ctx context.Context) (string, bool) {
 	val, ok := ctx.Value(AccountIDKey).(string)
+	return val, ok
+}
+
+// GetTenantID retrieves the authenticated PAT's tenant from the request context.
+func GetTenantID(ctx context.Context) (string, bool) {
+	val, ok := ctx.Value(TenantIDKey).(string)
 	return val, ok
 }
 
@@ -93,10 +100,33 @@ func (a *PATAuthenticator) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		tenantID, err := a.resolveTenant(r.Context(), accountID)
+		if err != nil {
+			log.Printf("PAT tenant resolution error: %v", err)
+			http.Error(w, "Service Unavailable: authentication failed", http.StatusServiceUnavailable)
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), AccountIDKey, accountID)
 		ctx = context.WithValue(ctx, PATTokenKey, patToken)
+		ctx = context.WithValue(ctx, TenantIDKey, tenantID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// resolveTenant returns the tenant that owns the account's Mello identity. The
+// authenticated credential is thereby bound to its tenant, so authorized requests can
+// be scoped and cross-tenant access denied.
+func (a *PATAuthenticator) resolveTenant(ctx context.Context, accountID string) (string, error) {
+	var tenantID string
+	err := a.Pool.QueryRow(ctx, `
+		SELECT tenant_id FROM account_identities
+		WHERE account_id = $1 AND provider_code = $2
+	`, accountID, "mello").Scan(&tenantID)
+	if err != nil {
+		return "", err
+	}
+	return tenantID, nil
 }
 
 func (a *PATAuthenticator) resolveAccount(ctx context.Context, token string) (string, error) {

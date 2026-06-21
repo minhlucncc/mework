@@ -220,3 +220,102 @@ func TestPATAuthMiddleware(t *testing.T) {
 		}
 	}
 }
+
+// mockMelloUser stands up a Mello stub that authenticates a single PAT and returns a
+// fixed user, with no boards (so the container sync is a no-op). It returns the URL.
+func mockMelloUser(t *testing.T, validPAT, userID string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+validPAT {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(mello.APIError{
+				StatusCode: http.StatusUnauthorized,
+				ErrorCode:  "unauthorized",
+				Message:    "Invalid token",
+			})
+			return
+		}
+		switch r.URL.Path {
+		case "/me":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(mello.User{ID: userID, Email: userID + "@example.com", Name: "User " + userID})
+		case "/workspaces":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]mello.Workspace{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestPATAuth_AttachesTenantID realizes the delta-spec scenario "Credential is bound
+// to its tenant" (specs/auth-and-secrets/spec.md) for the PAT credential: an
+// authenticated PAT resolves the tenant that owns its account and exposes it in the
+// request context via GetTenantID, so management routes can scope by tenant.
+func TestPATAuth_AttachesTenantID(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping database-backed PAT tenancy test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := store.RunMigrations(dsn); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+	defer func() { _ = store.RollbackMigrations(dsn) }()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("failed to connect to test db: %v", err)
+	}
+	defer pool.Close()
+
+	_, err = pool.Exec(ctx, "DELETE FROM watched_containers; DELETE FROM account_identities; DELETE FROM accounts; DELETE FROM tenants;")
+	if err != nil {
+		t.Fatalf("failed to clean db: %v", err)
+	}
+
+	// A dedicated tenant owns the account the PAT maps to.
+	var acme string
+	if err := pool.QueryRow(ctx, "INSERT INTO tenants (name) VALUES ('acme') RETURNING id").Scan(&acme); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+	var accountID string
+	if err := pool.QueryRow(ctx, "INSERT INTO accounts (name) VALUES ('Acme Acct') RETURNING id").Scan(&accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO account_identities (account_id, provider_code, external_user_id, tenant_id)
+		VALUES ($1, 'mello', 'mello_user_acme', $2)
+	`, accountID, acme); err != nil {
+		t.Fatalf("insert identity: %v", err)
+	}
+
+	authn := NewPATAuthenticator(pool, mockMelloUser(t, "pat_acme", "mello_user_acme"))
+
+	var gotTenantID string
+	var gotOK bool
+	target := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTenantID, gotOK = GetTenantID(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/api/v1/runtimes", nil)
+	req.Header.Set("Authorization", "Bearer pat_acme")
+	rec := httptest.NewRecorder()
+	authn.Middleware(target).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if !gotOK {
+		t.Fatal("context missing tenant ID")
+	}
+	if gotTenantID != acme {
+		t.Errorf("GetTenantID = %q, want acme %q", gotTenantID, acme)
+	}
+}

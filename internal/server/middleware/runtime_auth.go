@@ -19,6 +19,7 @@ type contextKey string
 const (
 	RuntimeIDKey contextKey = "runtime_id"
 	AccountIDKey contextKey = "account_id"
+	TenantIDKey  contextKey = "tenant_id"
 )
 
 func GetRuntimeID(ctx context.Context) (string, bool) {
@@ -28,6 +29,12 @@ func GetRuntimeID(ctx context.Context) (string, bool) {
 
 func GetAccountID(ctx context.Context) (string, bool) {
 	val, ok := ctx.Value(AccountIDKey).(string)
+	return val, ok
+}
+
+// GetTenantID retrieves the authenticated credential's tenant from the request context.
+func GetTenantID(ctx context.Context) (string, bool) {
+	val, ok := ctx.Value(TenantIDKey).(string)
 	return val, ok
 }
 
@@ -67,11 +74,11 @@ func (a *RuntimeAuthenticator) Middleware(next http.Handler) http.Handler {
 		// Compute lookup
 		lookup := token.ComputeLookup(rtToken, a.serverKey)
 
-		var runtimeID, accountID string
+		var runtimeID, accountID, tenantID string
 		err := a.pool.QueryRow(r.Context(), `
-			SELECT id, account_id FROM runtimes
+			SELECT id, account_id, tenant_id FROM runtimes
 			WHERE token_lookup = $1
-		`, lookup).Scan(&runtimeID, &accountID)
+		`, lookup).Scan(&runtimeID, &accountID, &tenantID)
 
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -96,6 +103,7 @@ func (a *RuntimeAuthenticator) Middleware(next http.Handler) http.Handler {
 
 		ctx := context.WithValue(r.Context(), RuntimeIDKey, runtimeID)
 		ctx = context.WithValue(ctx, AccountIDKey, accountID)
+		ctx = context.WithValue(ctx, TenantIDKey, tenantID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

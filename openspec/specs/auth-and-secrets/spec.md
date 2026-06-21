@@ -27,6 +27,11 @@ authenticator. `/webhooks/{provider}` is exempt from both but signature-verified
 - **WHEN** a daemon calls a job route without a valid `rt_token`
 - **THEN** the system rejects it as unauthorized
 
+#### Scenario: Credential is bound to its tenant
+
+- **WHEN** a credential (PAT or runtime token) authenticated for one tenant is used to access another tenant's resource
+- **THEN** the system denies the request because the credential only authorizes access to its own tenant's resources
+
 ### Requirement: Runtime token generation and lookup
 
 The system SHALL generate runtime tokens with a recognizable prefix and

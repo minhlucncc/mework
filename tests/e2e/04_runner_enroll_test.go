@@ -2,50 +2,168 @@ package e2e
 
 import "testing"
 
-// Feature 04 — Tenant management & runner enrollment (target).
+// Feature 04 — Tenant management & runner enrollment.
 // Source: SCENARIOS.md + the user's "tenant management" surface.
-// Spec: openspec/changes/c0004-agent-runner (+ tenant mgmt). Skips pending c0004.
+//
+// TENANT-01..03 are GREEN (c0000-tenancy): they execute against the real
+// server/registry.Service through the live World harness (tests/e2e/harness.go,
+// NewWorld), asserting the tenancy delta-spec scenarios
+// (openspec/changes/c0000-tenancy/specs/tenancy/spec.md). They skip only when
+// TEST_DATABASE_URL is unset, like every DB-backed test in the repo. The ENROLL-*
+// scenarios below remain Skip pending c0004.
 
+// TestTENANT_01_RegisterTenant realizes the delta-spec scenario
+// "Operator registers a tenant": registering a tenant yields a stable, non-empty
+// identifier and a fresh isolated namespace. Distinct registrations get distinct ids.
 func TestTENANT_01_RegisterTenant(t *testing.T) {
-	Scenario(t, "TENANT-01", "Register an isolated tenant", PlannedC0004).
-		Given("the hub is running", func(w *World) {}).
-		When("an operator registers a tenant \"acme\"", func(w *World) {
-			tn, err := w.Registry.RegisterTenant(ctx(), "acme")
-			w.set("tn", tn)
-			w.expect(err == nil, "tenant registration should succeed")
-		}).
-		Then("a tenant boundary exists that scopes all catalog/runner/dispatch state", func(w *World) {
-			tn := w.get("tn").(Tenant)
-			w.expect(tn.ID != "", "tenant must have an id")
-		}).
-		Run()
+	w := NewWorld(t)
+
+	tests := []struct {
+		name string
+	}{
+		{name: "acme"},
+		{name: "globex"},
+		{name: "initech"},
+	}
+
+	seen := make(map[TenantID]bool)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tn, err := w.Registry.RegisterTenant(ctx(), tt.name)
+			if err != nil {
+				t.Fatalf("RegisterTenant(%q): %v", tt.name, err)
+			}
+			if tn.ID == "" {
+				t.Errorf("RegisterTenant(%q): got empty ID, want a stable identifier", tt.name)
+			}
+			if tn.Name != tt.name {
+				t.Errorf("RegisterTenant(%q): Name = %q, want %q", tt.name, tn.Name, tt.name)
+			}
+			if seen[tn.ID] {
+				t.Errorf("RegisterTenant(%q): ID %q collides with an earlier tenant; each tenant is its own namespace", tt.name, tn.ID)
+			}
+			seen[tn.ID] = true
+		})
+	}
 }
 
+// TestTENANT_02_Isolation realizes the delta-spec scenarios "Listing returns only
+// the caller's tenant" and "Cross-tenant access is denied": with runners under both
+// acme and globex, an acme-scoped list returns exactly acme's runners and never
+// globex's, and vice versa.
 func TestTENANT_02_Isolation(t *testing.T) {
-	Scenario(t, "TENANT-02", "Tenants are isolated from each other", PlannedC0004).
-		Given("two tenants acme and globex, each with its own runners and agents", func(w *World) {}).
-		When("an acme identity lists runners", func(w *World) {
-			rs, _ := w.Registry.ListRunners(ctx(), "acme")
-			w.set("rs", rs)
-		}).
-		Then("only acme's runners are returned; globex's are never visible", func(w *World) {
-			w.expect(true, "cross-tenant access is denied; state is scoped per tenant")
-		}).
-		Run()
+	w := NewWorld(t)
+
+	acme, err := w.Registry.RegisterTenant(ctx(), "acme")
+	if err != nil {
+		t.Fatalf("RegisterTenant(acme): %v", err)
+	}
+	globex, err := w.Registry.RegisterTenant(ctx(), "globex")
+	if err != nil {
+		t.Fatalf("RegisterTenant(globex): %v", err)
+	}
+
+	// Each tenant enrolls its own runners via its own registration token, so the
+	// resulting identities are tenant-bound by construction.
+	acmeR1 := w.EnrollInto(t, acme.ID, "acme-rt-1")
+	acmeR2 := w.EnrollInto(t, acme.ID, "acme-rt-2")
+	globexR1 := w.EnrollInto(t, globex.ID, "globex-rt-1")
+
+	tests := []struct {
+		name       string
+		tenant     TenantID
+		wantOwned  []RunnerID
+		wantHidden []RunnerID
+	}{
+		{
+			name:       "acme sees only acme runners",
+			tenant:     acme.ID,
+			wantOwned:  []RunnerID{acmeR1, acmeR2},
+			wantHidden: []RunnerID{globexR1},
+		},
+		{
+			name:       "globex sees only globex runners",
+			tenant:     globex.ID,
+			wantOwned:  []RunnerID{globexR1},
+			wantHidden: []RunnerID{acmeR1, acmeR2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := w.Registry.ListRunners(ctx(), tt.tenant)
+			if err != nil {
+				t.Fatalf("ListRunners(%s): %v", tt.tenant, err)
+			}
+			set := make(map[RunnerID]bool, len(got))
+			for _, r := range got {
+				set[r] = true
+			}
+			if len(got) != len(tt.wantOwned) {
+				t.Fatalf("ListRunners(%s) returned %d runners, want %d: %+v", tt.tenant, len(got), len(tt.wantOwned), got)
+			}
+			for _, want := range tt.wantOwned {
+				if !set[want] {
+					t.Errorf("ListRunners(%s) missing own runner %q", tt.tenant, want)
+				}
+			}
+			for _, hidden := range tt.wantHidden {
+				if set[hidden] {
+					t.Errorf("ListRunners(%s) leaked runner %q from another tenant", tt.tenant, hidden)
+				}
+			}
+		})
+	}
 }
 
+// TestTENANT_03_RegistrationTokenScopedToTenant realizes the delta-spec scenarios
+// "Issued token is bound to its tenant" and "Enrolling yields a tenant-bound
+// identity": a token issued for acme enrolls a runner bound to acme, and a token
+// issued for one tenant never enrolls a runner into another.
 func TestTENANT_03_RegistrationTokenScopedToTenant(t *testing.T) {
-	Scenario(t, "TENANT-03", "Registration tokens are scoped to a tenant", PlannedC0004).
-		Given("tenant acme", func(w *World) {}).
-		When("an operator issues a registration token for acme", func(w *World) {
-			tok, err := w.Registry.IssueRegistrationToken(ctx(), "acme")
-			w.set("tok", tok)
-			w.expect(err == nil, "token issue should succeed")
-		}).
-		Then("enrolling with it yields a runner identity bound to acme", func(w *World) {
-			w.expect(w.get("tok") != "", "a registration token must be issued")
-		}).
-		Run()
+	w := NewWorld(t)
+
+	acme, err := w.Registry.RegisterTenant(ctx(), "acme")
+	if err != nil {
+		t.Fatalf("RegisterTenant(acme): %v", err)
+	}
+	globex, err := w.Registry.RegisterTenant(ctx(), "globex")
+	if err != nil {
+		t.Fatalf("RegisterTenant(globex): %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		issueFor   TenantID
+		notTenant  TenantID
+		wantTenant TenantID
+	}{
+		{name: "acme token enrolls under acme", issueFor: acme.ID, notTenant: globex.ID, wantTenant: acme.ID},
+		{name: "globex token enrolls under globex", issueFor: globex.ID, notTenant: acme.ID, wantTenant: globex.ID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tok, err := w.Registry.IssueRegistrationToken(ctx(), tt.issueFor)
+			if err != nil {
+				t.Fatalf("IssueRegistrationToken(%s): %v", tt.issueFor, err)
+			}
+			if tok == "" {
+				t.Fatalf("IssueRegistrationToken(%s): got empty token", tt.issueFor)
+			}
+
+			id, err := w.Registry.EnrollRunner(ctx(), tok)
+			if err != nil {
+				t.Fatalf("EnrollRunner(%s token): %v", tt.name, err)
+			}
+			if id.Tenant != tt.wantTenant {
+				t.Errorf("enrolled identity Tenant = %q, want %q", id.Tenant, tt.wantTenant)
+			}
+			if id.Tenant == tt.notTenant {
+				t.Errorf("token issued for %q enrolled a runner into %q; cross-tenant enrollment must be denied", tt.issueFor, tt.notTenant)
+			}
+		})
+	}
 }
 
 func TestENROLL_01_EnrollNewRunner(t *testing.T) {

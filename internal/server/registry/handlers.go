@@ -17,6 +17,19 @@ func NewHandlers(service *Service) *Handlers {
 	return &Handlers{service: service}
 }
 
+// callerTenant returns the tenant of the authenticated credential, which the auth
+// middleware resolves into the request context. Every tenant-scoped handler routes
+// its service call through this so the production HTTP path is scoped by the caller's
+// own tenant (not a hardcoded default), enforcing cross-tenant isolation at the route
+// layer. It falls back to the default tenant only when the context carries no tenant
+// (e.g. a legacy single-tenant credential during migration).
+func callerTenant(r *http.Request) Tenant {
+	if tid, ok := auth.GetTenantID(r.Context()); ok && tid != "" {
+		return Tenant{ID: tid}
+	}
+	return Tenant{ID: DefaultTenantID}
+}
+
 type CreateRuntimeRequest struct {
 	Code  string `json:"code"`
 	Label string `json:"label"`
@@ -40,7 +53,7 @@ func (h *Handlers) CreateRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rt, tok, err := h.service.CreateRuntime(r.Context(), accountID, req.Code, req.Label)
+	rt, tok, err := h.service.CreateRuntime(r.Context(), callerTenant(r), accountID, req.Code, req.Label)
 	if err != nil {
 		if errors.Is(err, ErrDuplicateCode) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -65,7 +78,7 @@ func (h *Handlers) ListRuntimes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtimes, err := h.service.ListRuntimes(r.Context(), accountID)
+	runtimes, err := h.service.ListRunners(r.Context(), callerTenant(r), accountID)
 	if err != nil {
 		http.Error(w, "Internal Server Error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -88,7 +101,7 @@ func (h *Handlers) DeleteRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.service.DeleteRuntime(r.Context(), accountID, id)
+	err := h.service.DeleteRuntime(r.Context(), callerTenant(r), accountID, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			http.Error(w, "Not Found", http.StatusNotFound)
