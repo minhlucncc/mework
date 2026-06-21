@@ -11,26 +11,28 @@ provider credentials at rest, and HMAC-based runtime-token lookup. Owned by
 
 ### Requirement: Two-token authentication
 
-The system SHALL guard management routes (`/api/v1` runtimes, connections,
-profiles) with a Mello personal access token (PAT) authenticator, and guard
-daemon job routes (`/api/v1/jobs/*`) with a runtime token (`rt_token`)
-authenticator. `/webhooks/{provider}` is exempt from both but signature-verified;
-`/healthz` is open.
+The system SHALL guard management routes with a Mello personal access token (PAT)
+authenticator and guard runner/agent transport routes (SSE subscribe, ack, pull)
+with a runner identity credential. In addition, every dispatched unit of work
+SHALL carry a **scoped permission grant** describing the operations it is permitted
+to perform; authentication establishes *who* the caller is, while the grant
+establishes *what this run may do*. `/webhooks/{provider}` remains signature-verified
+and `/healthz` remains open.
 
 #### Scenario: PAT required for management routes
 
 - **WHEN** a request hits a management route without a valid PAT
 - **THEN** the system rejects it as unauthorized
 
-#### Scenario: Runtime token required for job routes
+#### Scenario: Runner credential required for transport routes
 
-- **WHEN** a daemon calls a job route without a valid `rt_token`
+- **WHEN** a runner calls a subscribe/ack/pull route without a valid runner credential
 - **THEN** the system rejects it as unauthorized
 
-#### Scenario: Credential is bound to its tenant
+#### Scenario: Grant scopes the operation, not just identity
 
-- **WHEN** a credential (PAT or runtime token) authenticated for one tenant is used to access another tenant's resource
-- **THEN** the system denies the request because the credential only authorizes access to its own tenant's resources
+- **WHEN** an authenticated runner attempts an operation outside the grant attached to its current dispatch
+- **THEN** the operation is denied even though the caller is authenticated
 
 ### Requirement: Runtime token generation and lookup
 
