@@ -11,10 +11,14 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 ## [Unreleased]
 
 ### Added
+- Prebuilt agent-sandbox layer: named, versioned, immutable definitions binding an engine, agent backend, image/config, and resource limits into a ready-to-run combo, runnable by reference (`name@version`), with the `local` engine as default and one agent per sandbox (c0026-prebuilt-agent-sandbox).
+- Interactive multi-turn sessions over a long-lived sandbox with cancel/interrupt, idle reaping, ownership and tenant scoping, plus live `token|message|done|error` event streaming with tail-then-live for late subscribers and queryable session status/list (c0026-prebuilt-agent-sandbox).
+- Pre-baked image pinning for container engines so no install step runs at sandbox start-up; engines without images (e.g. `local`) ignore the field (c0026-prebuilt-agent-sandbox).
 - Versioned agent catalog with dispatch, permission model, and auth integration (c0004-agent-catalog).
 
 ### Changed
 
+- Daemon now drives a long-lived sandbox per session (in addition to one-shot dispatch), routing each chat turn over stdin and streaming per-turn events over the message bus, while preserving the stdin-not-argv and one-agent-per-sandbox invariants (c0026-prebuilt-agent-sandbox).
 - Normalize the parsed workflow keyword to canonical lowercase so triggers like `@mework dev Review …` map to `review` (c0007-normalize-workflow-keyword).
 
 ### Changed
