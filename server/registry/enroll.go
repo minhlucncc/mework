@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"mework/server/audit"
 	"mework/server/auth"
 )
 
@@ -51,6 +52,17 @@ func (h *Handlers) IssueRegistrationToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Record audit entry for grant issuance.
+	if h.auditSvc != nil {
+		_ = h.auditSvc.Record(r.Context(), audit.Entry{
+			TenantID:   tenantID,
+			ActorID:    accountID,
+			ActorType:  audit.ActorTypeUser,
+			Action:     audit.ActionGrantIssue,
+			TargetType: "registration_token",
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(issueRegistrationTokenResponse{Token: rawToken})
@@ -76,6 +88,18 @@ func (h *Handlers) EnrollRunner(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "Internal Server Error: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Record audit entry for runner enrollment.
+	if h.auditSvc != nil {
+		_ = h.auditSvc.Record(r.Context(), audit.Entry{
+			TenantID:   rt.TenantID,
+			ActorID:    rt.ID,
+			ActorType:  audit.ActorTypeRunner,
+			Action:     audit.ActionRunnerEnroll,
+			TargetType: "runner",
+			TargetID:   rt.ID,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

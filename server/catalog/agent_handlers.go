@@ -12,21 +12,21 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mework/server/audit"
+	"mework/server/auth"
 	"mework/server/bus"
+	"mework/server/quota"
 	"mework/shared/grant"
-	"mework/shared/ports"
 )
 
 // AgentHandlers provides HTTP handlers for agent catalog operations.
 // It maintains an in-memory store as a fallback when the DB-backed
 // Service is not available (pool is nil).
 type AgentHandlers struct {
-	service *Service
-	broker  bus.Broker
-
-	// selector is an optional RunnerSelector used for load-balanced dispatch
-	// when the request does not specify an explicit target runner.
-	selector ports.RunnerSelector
+	service   *Service
+	broker    bus.Broker
+	quotaSvc  *quota.Service
+	auditSvc  *audit.Service
 
 	mu       sync.RWMutex
 	agents   map[string]*Agent
@@ -36,17 +36,12 @@ type AgentHandlers struct {
 // NewAgentHandlers creates a new AgentHandlers instance.
 // When the DB-backed service is not available (nil pool), the in-memory
 // store is used. A few well-known agents are pre-populated for testing.
-func NewAgentHandlers(svc *Service, broker bus.Broker) *AgentHandlers {
-	return NewAgentHandlersWithSelector(svc, broker, nil)
-}
-
-// NewAgentHandlersWithSelector creates a new AgentHandlers instance with an
-// optional RunnerSelector for load-balanced dispatch.
-func NewAgentHandlersWithSelector(svc *Service, broker bus.Broker, selector ports.RunnerSelector) *AgentHandlers {
+func NewAgentHandlers(svc *Service, broker bus.Broker, quotaSvc *quota.Service, auditSvc *audit.Service) *AgentHandlers {
 	h := &AgentHandlers{
 		service:  svc,
 		broker:   broker,
-		selector: selector,
+		quotaSvc: quotaSvc,
+		auditSvc: auditSvc,
 		agents:   make(map[string]*Agent),
 		versions: make(map[string][]*AgentVersion),
 	}
@@ -338,17 +333,8 @@ func (h *AgentHandlers) versionContent(v *AgentVersion) map[string]any {
 
 // DispatchRequest is the JSON body for the dispatch HTTP endpoint.
 type DispatchRequest struct {
-	// Target is an explicit runner ID. When empty and a RunnerSelector
-	// is configured, selection is automatic.
-	Target string `json:"target,omitempty"`
-
-	// SessionID for session-affinity routing.
-	SessionID string `json:"session_id,omitempty"`
-
-	// TenantID selects the tenant scope for runner selection.
-	TenantID string `json:"tenant_id,omitempty"`
-
-	Grant *json.RawMessage `json:"grant,omitempty"`
+	Target string           `json:"target"`
+	Grant  *json.RawMessage `json:"grant,omitempty"`
 }
 
 // Dispatch handles POST /api/v1/agents/{name}/dispatch.
@@ -381,33 +367,39 @@ func (h *AgentHandlers) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve target runner.
-	target := req.Target
-	if target == "" && h.selector != nil {
-		criteria := ports.SelectionCriteria{
-			AgentRef:  name,
-			SessionID: req.SessionID,
-		}
-		selectedRunner, err := h.selector.Select(r.Context(), req.TenantID, criteria)
+	// Check quota before dispatching.
+	tenantID, _ := auth.GetTenantID(r.Context())
+	if h.quotaSvc != nil && tenantID != "" {
+		allowed, err := h.quotaSvc.Allow(r.Context(), tenantID, quota.OpSpawn)
 		if err != nil {
-			if errors.Is(err, ports.ErrNoEligibleRunner) {
-				http.Error(w, "No eligible runner available for dispatch; requeue", http.StatusServiceUnavailable)
-				return
-			}
-			http.Error(w, "Runner selection failed: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Internal Server Error: quota check failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		target = selectedRunner
+		if !allowed {
+			http.Error(w, "Too Many Requests: tenant at quota limit", http.StatusTooManyRequests)
+			return
+		}
 	}
 
-	if target == "" {
-		http.Error(w, "Bad Request: no target runner specified and no runner selector configured", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.DispatchToRunner(r.Context(), name, target, g); err != nil {
+	if err := h.DispatchToRunner(r.Context(), name, req.Target, g); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Record audit entry for dispatch.
+	if h.auditSvc != nil && tenantID != "" {
+		accountID, _ := auth.GetAccountID(r.Context())
+		_ = h.auditSvc.Record(r.Context(), audit.Entry{
+			TenantID:   tenantID,
+			ActorID:    accountID,
+			ActorType:  audit.ActorTypeUser,
+			Action:     audit.ActionDispatchRun,
+			TargetType: "agent",
+			TargetID:   name,
+			Metadata: map[string]any{
+				"target_runner": req.Target,
+			},
+		})
 	}
 
 	w.WriteHeader(http.StatusAccepted)

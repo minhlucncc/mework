@@ -42,7 +42,7 @@ func TestListRuntimes_CrossTenantIsolation(t *testing.T) {
 	const tenantBCode = "tenant-b-secret-rt"
 	seedRuntime(t, ctx, svc.pool, tenantB.ID, accountID, tenantBCode)
 
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	tests := []struct {
 		name       string
@@ -90,7 +90,7 @@ func TestDeleteRuntime_CrossTenantIsolation(t *testing.T) {
 	}
 
 	runtimeID := seedRuntime(t, ctx, svc.pool, tenantB.ID, accountID, "tenant-b-only")
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	deleteReq := func(tenantID, id string) *httptest.ResponseRecorder {
 		req := withTenantContext(http.MethodDelete, "/api/v1/runtimes/"+id, accountID, tenantID)

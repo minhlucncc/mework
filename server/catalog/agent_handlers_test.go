@@ -18,7 +18,7 @@ import (
 func setupTestRouter(t *testing.T) (*chi.Mux, *AgentHandlers, *memory.MemoryBroker) {
 	t.Helper()
 	broker := memory.New()
-	h := NewAgentHandlers(nil, broker)
+	h := NewAgentHandlers(nil, broker, nil, nil)
 	r := chi.NewRouter()
 	r.Route("/api/v1/agents", func(r chi.Router) {
 		r.Post("/{name}/versions", h.PublishVersion)

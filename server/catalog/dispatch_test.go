@@ -17,7 +17,7 @@ func TestDispatch_ResolveAndPublish(t *testing.T) {
 
 	broker := memory.New()
 	svc := NewService(nil) // store-layer service; nil pool means DB ops will fail
-	h := NewAgentHandlers(svc, broker)
+	h := NewAgentHandlers(svc, broker, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -70,7 +70,7 @@ func TestDispatch_ResolveAndPublish(t *testing.T) {
 func TestDispatch_MissingAgent(t *testing.T) {
 	broker := memory.New()
 	svc := NewService(nil)
-	h := NewAgentHandlers(svc, broker)
+	h := NewAgentHandlers(svc, broker, nil, nil)
 
 	ctx := context.Background()
 
@@ -89,7 +89,7 @@ func TestDispatch_MissingAgent(t *testing.T) {
 func TestDispatch_MissingVersion(t *testing.T) {
 	broker := memory.New()
 	svc := NewService(nil)
-	h := NewAgentHandlers(svc, broker)
+	h := NewAgentHandlers(svc, broker, nil, nil)
 
 	ctx := context.Background()
 
@@ -108,7 +108,7 @@ func TestDispatch_MissingVersion(t *testing.T) {
 func TestDispatch_Unauthorized(t *testing.T) {
 	broker := memory.New()
 	svc := NewService(nil)
-	h := NewAgentHandlers(svc, broker)
+	h := NewAgentHandlers(svc, broker, nil, nil)
 
 	ctx := context.Background()
 

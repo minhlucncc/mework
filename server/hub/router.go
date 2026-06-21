@@ -7,6 +7,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"mework/server/audit"
 	"mework/server/auth"
 	"mework/server/bus"
 	"mework/server/bus/memory"
@@ -16,8 +17,8 @@ import (
 	"mework/server/orchestrator"
 	"mework/server/provider"
 	melloprovider "mework/server/provider/mello"
+	"mework/server/quota"
 	"mework/server/registry"
-	"mework/server/scheduler"
 	"mework/server/webhook"
 	"mework/shared/grant"
 )
@@ -40,7 +41,12 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 
 	patAuth := auth.NewPATAuthenticator(pool, cfg.MelloBaseURL)
 	registrySvc := registry.NewService(pool, cfg.ServerKey)
-	registryHandlers := registry.NewHandlers(registrySvc)
+
+	// Create platform hardening services.
+	quotaSvc := quota.NewService(pool)
+	auditSvc := audit.NewService(pool)
+
+	registryHandlers := registry.NewHandlers(registrySvc, auditSvc)
 
 	connectionSvc := connection.NewService(pool, cfg.MeworkSecretKey)
 	connectionHandlers := connection.NewHandlers(connectionSvc)
@@ -53,11 +59,7 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		msgBroker = memory.New()
 	}
 
-	agentHandlers := catalog.NewAgentHandlers(profileSvc, msgBroker)
-	schedulerSvc := scheduler.NewService(pool, agentHandlers)
-	schedulerHandlers := scheduler.NewHandlers(schedulerSvc)
-	schedulerSvc.Start()
-
+	agentHandlers := catalog.NewAgentHandlers(profileSvc, msgBroker, quotaSvc, auditSvc)
 	sseHandler := bus.NewSSEHandler(msgBroker)
 	msgAckHandler := bus.NewAckHandler(msgBroker)
 
@@ -104,12 +106,10 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 
 		r.Post("/runners/registration-tokens", registryHandlers.IssueRegistrationToken)
 
-		r.Post("/schedules", schedulerHandlers.CreateSchedule)
-		r.Get("/schedules", schedulerHandlers.ListSchedules)
-		r.Get("/schedules/{id}", schedulerHandlers.GetSchedule)
-		r.Post("/schedules/{id}/pause", schedulerHandlers.PauseSchedule)
-		r.Post("/schedules/{id}/resume", schedulerHandlers.ResumeSchedule)
-		r.Post("/schedules/{id}/cancel", schedulerHandlers.CancelSchedule)
+		// Quota and audit admin endpoints.
+		r.Get("/quotas/{tenant_id}", quotaHandlers(quotaSvc).GetLimits)
+		r.Put("/quotas/{tenant_id}", quotaHandlers(quotaSvc).UpdateLimits)
+		r.Get("/audit/{tenant_id}", auditHandlers(auditSvc).QueryLog)
 	})
 
 	r.Post("/api/v1/runners/enroll", registryHandlers.EnrollRunner)
@@ -131,4 +131,14 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.Router.ServeHTTP(w, r)
+}
+
+// quotaHandlers creates a handler set for quota admin endpoints.
+func quotaHandlers(svc *quota.Service) *quota.HTTPHandlers {
+	return quota.NewHTTPHandlers(svc)
+}
+
+// auditHandlers creates a handler set for audit admin endpoints.
+func auditHandlers(svc *audit.Service) *audit.HTTPHandlers {
+	return audit.NewHTTPHandlers(svc)
 }

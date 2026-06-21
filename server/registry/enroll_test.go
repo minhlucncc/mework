@@ -35,7 +35,7 @@ func TestEnrollServer_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterTenant: %v", err)
 	}
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	issueBody := mustMarshal(t, map[string]string{"tenant_id": tenant.ID})
 	req := withRequestBody(http.MethodPost, "/api/v1/runners/registration-tokens",
@@ -108,7 +108,7 @@ func TestEnrollServer_ExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterTenant: %v", err)
 	}
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	issueBody := mustMarshal(t, map[string]string{"tenant_id": tenant.ID})
 	req := withRequestBody(http.MethodPost, "/api/v1/runners/registration-tokens",
@@ -144,7 +144,7 @@ func TestEnrollServer_ExpiredToken(t *testing.T) {
 
 func TestEnrollServer_InvalidToken(t *testing.T) {
 	_, svc, _ := newTenancyTestService(t)
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	exchangeBody := mustMarshal(t, map[string]string{"token": "nonexistent-reg-token"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runners/enroll",
@@ -166,7 +166,7 @@ func TestEnrollServer_SingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterTenant: %v", err)
 	}
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	issueBody := mustMarshal(t, map[string]string{"tenant_id": tenant.ID})
 	req := withRequestBody(http.MethodPost, "/api/v1/runners/registration-tokens",
@@ -209,7 +209,7 @@ func TestEnrollServer_SingleUse(t *testing.T) {
 
 func TestEnrollServer_EndpointAuth(t *testing.T) {
 	_, svc, _ := newTenancyTestService(t)
-	handlers := NewHandlers(svc)
+	handlers := NewHandlers(svc, nil)
 
 	tests := []struct {
 		name    string

@@ -6,15 +6,17 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"mework/server/audit"
 	"mework/server/auth"
 )
 
 type Handlers struct {
-	service *Service
+	service  *Service
+	auditSvc *audit.Service
 }
 
-func NewHandlers(service *Service) *Handlers {
-	return &Handlers{service: service}
+func NewHandlers(service *Service, auditSvc *audit.Service) *Handlers {
+	return &Handlers{service: service, auditSvc: auditSvc}
 }
 
 // callerTenant returns the tenant of the authenticated credential, which the auth
