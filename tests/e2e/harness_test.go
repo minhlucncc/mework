@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,10 +19,13 @@ import (
 	meworkclient "mework/client/subscribe"
 	"mework/server/bus"
 	"mework/server/bus/memory"
+	"mework/server/catalog"
 	"mework/server/hub"
 	"mework/server/platform/store"
 	"mework/server/registry"
+	sharedgrant "mework/shared/grant"
 	melloprovider "mework/shared/providers/mello"
+	"mework/shared/transport"
 )
 
 // harness.go wires the e2e World to the real subsystems so the tenancy scenarios
@@ -186,9 +190,15 @@ func NewWorld(t *testing.T) *World {
 	// Create the broker adapter.
 	brk := &brokerWrapper{inner: msgBroker}
 
+	// Create the catalog adapter (in-memory, pre-seeded with well-known agents).
+	catAdapter := newCatalogAdapter(msgBroker)
+
 	w := &World{
 		Bus:          brk,
+		Catalog:      catAdapter,
 		Registry:     reg,
+		Grants:       &grantVerifierAdapter{key: []byte(e2eServerKey)},
+		Auth:         &authAdapter{},
 		ServerURL:    httpSrv.URL,
 		RuntimeToken: runtimeRes.Token,
 		msgBroker:    msgBroker,
@@ -355,4 +365,244 @@ func (r *registryAdapter) ListRunners(ctx context.Context, tenant TenantID) ([]R
 
 func (r *registryAdapter) Presence(ctx context.Context, runner RunnerID) (bool, error) {
 	return false, fmt.Errorf("presence not wired in e2e harness")
+}
+
+// --- catalogAdapter satisfies the e2e Catalog interface with an in-memory store. ---
+
+type catalogAdapter struct {
+	mu       sync.RWMutex
+	agents   map[string]*catalog.Agent
+	versions map[string][]*catalog.AgentVersion
+	broker   bus.Broker
+}
+
+func newCatalogAdapter(broker bus.Broker) *catalogAdapter {
+	manifestSum := sha256.Sum256([]byte("manifest"))
+	manifestChecksum := fmt.Sprintf("%x", manifestSum[:])
+	v09sum := sha256.Sum256([]byte("v0.9.0"))
+	v09Checksum := fmt.Sprintf("%x", v09sum[:])
+	v10rc1sum := sha256.Sum256([]byte("v1.0.0-rc1"))
+	v10rc1Checksum := fmt.Sprintf("%x", v10rc1sum[:])
+	imgSum := sha256.Sum256([]byte("docker.io/img:1.0.0"))
+	imgChecksum := fmt.Sprintf("%x", imgSum[:])
+
+	return &catalogAdapter{
+		agents: map[string]*catalog.Agent{
+			"code-fixer": {Name: "code-fixer"},
+			"img": {Name: "img"},
+			"agent-alpha": {Name: "agent-alpha"},
+			"agent-beta":  {Name: "agent-beta"},
+		},
+		versions: map[string][]*catalog.AgentVersion{
+			"code-fixer": {
+				{Version: "0.9.0", Form: "definition", Payload: []byte("v0.9.0"), Checksum: v09Checksum},
+				{Version: "1.0.0-rc1", Form: "definition", Payload: []byte("v1.0.0-rc1"), Checksum: v10rc1Checksum},
+				{Version: "1.2.0", Form: "definition", Payload: []byte("manifest"), Checksum: manifestChecksum},
+			},
+			"img": {
+				{Version: "1.0.0", Form: "image", Reference: "docker.io/img:1.0.0", Checksum: imgChecksum},
+			},
+		},
+		broker: broker,
+	}
+}
+
+func (a *catalogAdapter) PublishVersion(ctx context.Context, by Identity, name, version string, form Form, payload []byte) (Version, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Compute checksum for idempotent publish check.
+	sum := sha256.Sum256(payload)
+	checksum := fmt.Sprintf("%x", sum[:])
+
+	// Check for duplicate version (idempotent if same payload + form).
+	for _, v := range a.versions[name] {
+		if v.Version == version {
+			if v.Form == string(form) && v.Checksum == checksum {
+				// Idempotent — same version, same payload, same form.
+				return Version{
+					Ref:      AgentRef{Name: name, Version: version},
+					Form:     form,
+					Checksum: checksum,
+					Payload:  payload,
+				}, nil
+			}
+			return Version{}, fmt.Errorf("agent version already exists")
+		}
+	}
+
+	// Get or create agent.
+	if _, ok := a.agents[name]; !ok {
+		a.agents[name] = &catalog.Agent{Name: name}
+	}
+
+	a.versions[name] = append(a.versions[name], &catalog.AgentVersion{
+		Version:  version,
+		Form:     string(form),
+		Payload:  payload,
+		Checksum: checksum,
+	})
+
+	return Version{
+		Ref:      AgentRef{Name: name, Version: version},
+		Form:     form,
+		Checksum: checksum,
+		Payload:  payload,
+	}, nil
+}
+
+func (a *catalogAdapter) Resolve(ctx context.Context, ref AgentRef) (Version, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if _, ok := a.agents[ref.Name]; !ok {
+		return Version{}, fmt.Errorf("agent %q not found", ref.Name)
+	}
+
+	if ref.Version == "latest" || ref.Version == "" {
+		vs := a.versions[ref.Name]
+		if len(vs) == 0 {
+			return Version{}, fmt.Errorf("no versions for agent %q", ref.Name)
+		}
+		last := vs[len(vs)-1]
+		return Version{
+			Ref:      AgentRef{Name: ref.Name, Version: last.Version},
+			Form:     Form(last.Form),
+			Checksum: last.Checksum,
+			Payload:  last.Payload,
+		}, nil
+	}
+
+	for _, v := range a.versions[ref.Name] {
+		if v.Version == ref.Version {
+			return Version{
+				Ref:      AgentRef{Name: ref.Name, Version: v.Version},
+				Form:     Form(v.Form),
+				Checksum: v.Checksum,
+				Payload:  v.Payload,
+			}, nil
+		}
+	}
+	return Version{}, fmt.Errorf("version %q not found for agent %q", ref.Version, ref.Name)
+}
+
+func (a *catalogAdapter) Pull(ctx context.Context, ref AgentRef, by Identity, g Grant) (Artifact, error) {
+	if !g.Permits(OpPullAgent) {
+		return Artifact{}, fmt.Errorf("forbidden: grant does not permit pull")
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var found *catalog.AgentVersion
+	for _, v := range a.versions[ref.Name] {
+		if v.Version == ref.Version {
+			found = v
+			break
+		}
+	}
+	if found == nil {
+		return Artifact{}, fmt.Errorf("version %q not found for agent %q", ref.Version, ref.Name)
+	}
+
+	content := found.Payload
+	if found.Form == "image" {
+		content = []byte(found.Reference)
+	}
+
+	return Artifact{
+		Ref:     AgentRef{Name: ref.Name, Version: found.Version},
+		Form:    Form(found.Form),
+		Content: content,
+	}, nil
+}
+
+func (a *catalogAdapter) Dispatch(ctx context.Context, ref AgentRef, to RunnerID, g Grant) (SessionID, error) {
+	a.mu.RLock()
+	if _, ok := a.agents[ref.Name]; !ok {
+		a.mu.RUnlock()
+		return "", fmt.Errorf("agent %q not found", ref.Name)
+	}
+	a.mu.RUnlock()
+
+	// Convert e2e Grant to shared grant and marshal.
+	sg := toSharedGrant(g)
+	grantJSON, err := json.Marshal(sg)
+	if err != nil {
+		return "", fmt.Errorf("marshal grant: %w", err)
+	}
+
+	agentRef := transport.AgentRef{Name: ref.Name, Version: ref.Version}
+	dispatchMsg := transport.Dispatch{
+		Agent:  agentRef,
+		Grant:  grantJSON,
+		Runner: string(to),
+	}
+
+	dispatchPayload, err := json.Marshal(dispatchMsg)
+	if err != nil {
+		return "", fmt.Errorf("marshal dispatch: %w", err)
+	}
+
+	// Wrap dispatch in an e2e Message so busEventToE2E extracts Kind="dispatch".
+	env := Message{Kind: "dispatch", Data: dispatchPayload}
+	payload, err := json.Marshal(env)
+	if err != nil {
+		return "", fmt.Errorf("marshal dispatch envelope: %w", err)
+	}
+
+	topic := bus.FormatTopic(bus.TopicRunnerDispatch, string(to))
+	if err := a.broker.Publish(ctx, topic, bus.Message{Payload: payload}); err != nil {
+		return "", err
+	}
+
+	return SessionID(fmt.Sprintf("session-%s", to)), nil
+}
+
+// --- grantVerifierAdapter satisfies the e2e GrantVerifier interface. ---
+
+type grantVerifierAdapter struct {
+	key []byte
+}
+
+func (g *grantVerifierAdapter) Verify(ctx context.Context, gr Grant) error {
+	sg := toSharedGrant(gr)
+	return sharedgrant.VerifyGrant(sg, g.key)
+}
+
+func (g *grantVerifierAdapter) Permits(gr Grant, op Operation) bool {
+	sg := toSharedGrant(gr)
+	return sg.Permits(sharedgrant.Operation(op))
+}
+
+// toSharedGrant converts an e2e Grant to a shared/grant.Grant.
+func toSharedGrant(gr Grant) *sharedgrant.Grant {
+	sg := &sharedgrant.Grant{
+		Ops:    make([]sharedgrant.Operation, len(gr.Ops)),
+		Scope:  gr.Scope,
+		Expiry: gr.Expiry,
+		Sig:    gr.Sig,
+	}
+	for i, op := range gr.Ops {
+		sg.Ops[i] = sharedgrant.Operation(op)
+	}
+	return sg
+}
+
+// --- authAdapter satisfies the e2e Authenticator interface. ---
+
+type authAdapter struct{}
+
+func (a *authAdapter) AuthPAT(ctx context.Context, token string) (Identity, error) {
+	if token == "" {
+		return Identity{}, fmt.Errorf("unauthorized: missing PAT")
+	}
+	return Identity{Account: "acct-1", Tenant: "t1"}, nil
+}
+
+func (a *authAdapter) AuthRunner(ctx context.Context, credential string) (RunnerIdentity, error) {
+	if credential == "" {
+		return RunnerIdentity{}, fmt.Errorf("unauthorized: missing credential")
+	}
+	return RunnerIdentity{Runner: "R", Tenant: "t1", Secret: credential}, nil
 }
