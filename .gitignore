@@ -95,3 +95,4 @@ worktrees/
 
 # ship-all durable progress (re-discovered on each run from openspec list --json)
 openspec/changes/.ship-all-progress.json
+go.work.sum
