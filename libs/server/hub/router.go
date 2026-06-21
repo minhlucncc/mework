@@ -14,6 +14,7 @@ import (
 	"mework/libs/server/bus"
 	"mework/libs/server/bus/memory"
 	"mework/libs/server/catalog"
+	"mework/libs/server/channel"
 	"mework/libs/server/connection"
 	"mework/libs/server/middleware"
 	"mework/libs/server/notify"
@@ -21,6 +22,7 @@ import (
 	"mework/libs/server/provider"
 	melloprovider "mework/libs/server/provider/mello"
 	"mework/libs/server/registry"
+	"mework/libs/server/session"
 	"mework/libs/server/webhook"
 	"mework/libs/shared/grant"
 )
@@ -58,11 +60,23 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		msgBroker = memory.New()
 	}
 
+	// Channel routing infrastructure.
+	channelFeature := channel.NewFeatureFlag(false) // Off by default; backward compatible.
+	channelReg := channel.NewPostgresRegistry(pool)
+	if err := channelReg.PopulateCache(context.Background()); err != nil {
+		log.Printf("Failed to populate channel cache: %v", err)
+	}
+
 	agentHandlers := catalog.NewAgentHandlers(profileSvc, msgBroker, nil, nil)
 	sseHandler := bus.NewSSEHandler(msgBroker)
 	msgAckHandler := bus.NewAckHandler(msgBroker)
 
-	webhookHandler := webhook.NewHandler(pool, msgBroker, cfg.MeworkSecretKey, cfg.MelloBaseURL)
+	sessionMgr := session.NewManager(msgBroker, session.DefaultConfig())
+
+	autoProvisioner := channel.NewAutoProvisioner(registrySvc, channelReg, sessionMgr, agentHandlers, msgBroker, registry.DefaultTenantID)
+	channelRouter := channel.NewRouter(channelReg, msgBroker, autoProvisioner, channelFeature)
+
+	webhookHandler := webhook.NewHandler(pool, msgBroker, cfg.MeworkSecretKey, cfg.MelloBaseURL, channelRouter)
 
 	melloAdapter := melloprovider.NewMelloAdapter(cfg.MelloBaseURL)
 	provider.Register(melloAdapter)

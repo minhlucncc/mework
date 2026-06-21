@@ -34,6 +34,11 @@ type Registry interface {
 	// PopulateCache loads all active channel sessions from the DB into the
 	// in-memory cache. Called on server startup.
 	PopulateCache(ctx context.Context) error
+	// Status returns the current lifecycle status of a channel (active, draining, closed).
+	// Returns empty string if the channel key is not found.
+	Status(ctx context.Context, channelKey string) (string, error)
+	// SetStatus updates the lifecycle status of a channel.
+	SetStatus(ctx context.Context, channelKey, status string) error
 }
 
 // PostgresRegistry implements Registry with a Postgres backend and sync.Map cache.
@@ -154,6 +159,30 @@ func (r *PostgresRegistry) PopulateCache(ctx context.Context) error {
 		r.cache.Store(key, sessionID)
 	}
 	return nil
+}
+
+// Status returns the current lifecycle status of a channel. Returns empty
+// string if the channel key is not found.
+func (r *PostgresRegistry) Status(ctx context.Context, channelKey string) (string, error) {
+	var status string
+	err := r.pool.QueryRow(ctx, `
+		SELECT status FROM channel_sessions WHERE channel_key = $1
+	`, channelKey).Scan(&status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return status, nil
+}
+
+// SetStatus updates the lifecycle status of a channel.
+func (r *PostgresRegistry) SetStatus(ctx context.Context, channelKey, status string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE channel_sessions SET status = $1 WHERE channel_key = $2
+	`, status, channelKey)
+	return err
 }
 
 // hashChannelKey produces a 64-bit hash for advisory locking.

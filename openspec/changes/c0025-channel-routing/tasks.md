@@ -23,12 +23,12 @@
 
 ## 4. Channel Router
 
-- [ ] 4.1 Create `channel.Router` struct with `Route(ctx, providerCode, resourceID, eventPayload) error`
-- [ ] 4.2 Implement event → channel key computation (`providerCode:resourceID`)
-- [ ] 4.3 Implement lookup: check cache, fall back to DB, if no session → call AutoProvisioner
-- [ ] 4.4 Implement event publishing to channel bus topic: `channel.<provider>.<resourceID>.<eventType>`
-- [ ] 4.5 Add channel lifecycle transitions: `active → draining → closed`
-- [ ] 4.6 Add feature flag to toggle between old and new routing paths
+- [x] 4.1 Create `channel.Router` struct with `Route(ctx, providerCode, resourceID, eventPayload) error`
+- [x] 4.2 Implement event → channel key computation (`providerCode:resourceID`)
+- [x] 4.3 Implement lookup: check cache, fall back to DB, if no session → call AutoProvisioner
+- [x] 4.4 Implement event publishing to channel bus topic: `channel.<provider>.<resourceID>.<eventType>`
+- [x] 4.5 Add channel lifecycle transitions: `active → draining → closed`
+- [x] 4.6 Add feature flag to toggle between old and new routing paths
 
 ## 5. Sandbox Bundle Format
 
@@ -43,27 +43,27 @@
 
 ## 6. Auto-Provisioner (Agent Catalog Integration)
 
-- [ ] 6.1 Create `AutoProvisioner` struct wired to session manager, worker selector, agent catalog, and message bus
-- [ ] 6.2 Implement spec derivation from resolved profile's `backend_hint` → agent catalog name
-- [ ] 6.3 Implement spec-aware `SelectWorker(spec)` using spec-filtered runner query
-- [ ] 6.4 Implement session creation via `session.Manager.Create()`
-- [ ] 6.5 Implement channel binding (write to `channel_sessions`, update cache)
-- [ ] 6.6 Implement agent catalog dispatch: call `Dispatch` to send agent to selected worker with scoped grant
-- [ ] 6.7 Implement sandbox spawn: worker pulls agent via `PullVersion` (zip if bundle form), extracts, subscribes to channel topic, runs locally
-- [ ] 6.8 Implement retry with backoff (3×, 5s apart) when no eligible worker is online
+- [x] 6.1 Create `AutoProvisioner` struct wired to session manager, worker selector, agent catalog, and message bus
+- [x] 6.2 Implement spec derivation from resolved profile's `backend_hint` → agent catalog name
+- [x] 6.3 Implement spec-aware `SelectWorker(spec)` using spec-filtered runner query
+- [x] 6.4 Implement session creation via `session.Manager.Create()`
+- [x] 6.5 Implement channel binding (write to `channel_sessions`, update cache)
+- [x] 6.6 Implement agent catalog dispatch: call `Dispatch` to send agent to selected worker with scoped grant
+- [x] 6.7 Implement sandbox spawn: worker pulls agent via `PullVersion` (zip if bundle form), extracts, subscribes to channel topic, runs locally
+- [x] 6.8 Implement retry with backoff (3×, 5s apart) when no eligible worker is online
 
 ## 6. Bus Topic Extension
 
-- [ ] 6.1 Verify `MatchTopic` supports `channel.<provider>.<id>.*` pattern
-- [ ] 6.2 Add tests for channel-scoped `MatchTopic` patterns
-- [ ] 6.3 Add tests for channel isolation: two channels on same worker don't leak events
+- [x] 6.1 Verify `MatchTopic` supports `channel.<provider>.<id>.*` pattern
+- [x] 6.2 Add tests for channel-scoped `MatchTopic` patterns
+- [x] 6.3 Add tests for channel isolation: two channels on same worker don't leak events
 
 ## 7. Webhook Handler Integration
 
-- [ ] 7.1 Extend provider adapter interface with `ChannelKey(rawPayload) → (providerCode, resourceID)`
-- [ ] 7.2 Implement `ChannelKey` on the Mello adapter
-- [ ] 7.3 Wire `ChannelRouter.Route()` into webhook handler after trigger parsing (alongside existing path initially)
-- [ ] 7.4 Add feature flag toggle: old path (profile-topic) vs new path (channel routing)
+- [x] 7.1 Extend provider adapter interface with `ChannelKey(rawPayload) → (providerCode, resourceID)`
+- [x] 7.2 Implement `ChannelKey` on the Mello adapter
+- [x] 7.3 Wire `ChannelRouter.Route()` into webhook handler after trigger parsing (alongside existing path initially)
+- [x] 7.4 Add feature flag toggle: old path (profile-topic) vs new path (channel routing)
 
 ## 8. Daemon (Worker) Integration
 
