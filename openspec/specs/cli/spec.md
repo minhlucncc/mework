@@ -11,23 +11,24 @@ connecting providers, and controlling the daemon. Owned by `cmd/mework` and
 
 ### Requirement: Command surface
 
-The system SHALL provide commands grouped as: Core
-(`workspace list`; `board list/get`; `ticket list/get/create/move`;
-`comment list/add`; `search`), Runtime
-(`daemon start/stop/status/restart/logs`; `runtime register/list/revoke`;
-`profile create/list/update/delete`), and Additional
-(`login`; `auth status/logout`; `config show/set`; `provider connect`;
-`version`). Read commands SHALL support `--json` output.
+The system SHALL provide commands grouped as: Core (provider task management:
+`workspace list`; `board list/get`; `ticket list/get/create/move`;
+`comment list/add`; `search`), Runner (`runner enroll` for install-once
+enrollment; `daemon start/stop/status/restart/logs`; read-only `agent list`
+and `session list` to inspect dispatched agents and active sessions), and
+Additional (`login`; `auth status/logout`; `config show/set`; `provider connect`;
+`version`). Read commands SHALL support `--json` output. The poll-oriented
+`runtime register` / claim framing is replaced by `runner enroll`.
 
-#### Scenario: Register a runtime
+#### Scenario: Enroll a runner from the CLI
 
-- **WHEN** a user runs `mework runtime register --code local-macbook`
-- **THEN** the server creates a runtime and returns a one-time runtime token (`rt_token`)
+- **WHEN** an operator runs `mework runner enroll --url <hub> --token <registration-token>`
+- **THEN** the runner is enrolled with a durable identity and is ready to receive dispatches unattended
 
-#### Scenario: Create a profile
+#### Scenario: Inspect active sessions
 
-- **WHEN** a user runs `mework profile create --name default --backend claude ...`
-- **THEN** the server stores an AI instruction profile for the account
+- **WHEN** an operator runs `mework session list --json`
+- **THEN** the CLI emits the active sessions for the enrolled runner as JSON
 
 #### Scenario: Machine-readable output
 

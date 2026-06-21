@@ -11,20 +11,21 @@ no job state of its own. Owned by `internal/daemon` and `internal/agentrun`.
 
 ### Requirement: Stateless poll worker
 
-The system SHALL implement the daemon as a stateless loop that polls the server
-to claim a job, acks it `running`, heartbeats periodically while it executes, and
-acks `done`/`failed` with a result summary. The daemon MUST authenticate to job
-routes with its runtime token (`rt_token`) and MUST NOT persist local job state.
+The daemon SHALL operate as an **enrolled SSE runner**, not a poll worker. After
+one-time enrollment it MUST subscribe to its topics over SSE (per `message-bus`),
+receive dispatches by push, and drive a **pull → run → report** loop, persisting
+only its durable runner identity and in-flight bookkeeping. It MUST NOT poll a
+claim endpoint on a fixed interval.
 
-#### Scenario: Claim, execute, ack
+#### Scenario: No interval polling
 
-- **WHEN** a job is available and the daemon polls
-- **THEN** the daemon claims it, acks `running`, executes it, and acks the terminal result
+- **WHEN** an enrolled runner is online and idle
+- **THEN** it holds an open SSE subscription and issues no periodic claim/poll requests
 
-#### Scenario: Heartbeat while running
+#### Scenario: Driven by dispatch
 
-- **WHEN** a job execution is in progress
-- **THEN** the daemon heartbeats periodically so the server lease does not expire
+- **WHEN** the hub dispatches work to the runner
+- **THEN** the runner pulls the agent, runs it, and reports the result, acknowledging the dispatch on terminal handling
 
 ### Requirement: AI backend detection
 
