@@ -1,8 +1,16 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"testing"
 	"time"
+
+	meworkclient "mework/client/subscribe"
+	"mework/server/hub"
+	"mework/server/platform/store"
+	"mework/server/registry"
 )
 
 // ============================================================================
@@ -737,3 +745,98 @@ func msg(topic Topic, kind string) Message { return Message{Topic: topic, Kind: 
 
 // grant builds a least-privilege grant over the given operations.
 func grant(ops ...Operation) Grant { return Grant{Ops: ops} }
+
+// ============================================================================
+// MODULE STRUCTURE VALIDATION (delta-spec scenarios from project-structure/spec.md)
+//
+// These tests are the behavior-preservation guard: they pass only after the
+// restructure is fully applied — all import paths updated, mcp-go removed,
+// and the go.work workspace references every module.
+// ============================================================================
+
+// TestModuleStructure_ImportsResolve verifies that every module's packages
+// are reachable from the test module — the fundamental "independently buildable"
+// and "server builds without client or sandbox" scenarios.
+func TestModuleStructure_ImportsResolve(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{
+			name: "server/hub resolves and creates Config",
+			fn: func(t *testing.T) {
+				_ = &hub.Config{DatabaseURL: "postgres://test"}
+			},
+		},
+		{
+			name: "client/subscribe resolves and creates Client",
+			fn: func(t *testing.T) {
+				_ = meworkclient.NewClient("http://localhost:8080", 5*time.Second)
+			},
+		},
+		{
+			name: "server/platform/store resolves",
+			fn: func(t *testing.T) {
+				_ = store.RunMigrations
+			},
+		},
+		{
+			name: "server/registry resolves",
+			fn: func(t *testing.T) {
+				_ = registry.NewService
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, tt.fn)
+	}
+}
+
+// TestModuleStructure_BinaryWiring verifies the "binaries only wire" and
+// "client and server stay decoupled" scenarios: the client binary is in
+// client/cmd/mework and the server binary is in server/cmd/mework-server.
+func TestModuleStructure_BinaryWiring(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "client binary at client/cmd/mework", path: "../../client/cmd/mework/main.go"},
+		{name: "server binary at server/cmd/mework-server", path: "../../server/cmd/mework-server/main.go"},
+		{name: "sandbox binary at sandbox/cmd/mework-sandbox", path: "../../sandbox/cmd/mework-sandbox/main.go"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := os.Stat(tt.path); os.IsNotExist(err) {
+				t.Errorf("expected binary entry point at %s: does not exist", tt.path)
+			}
+		})
+	}
+}
+
+// TestModuleStructure_McpGoRemoved verifies that the unused mark3labs/mcp-go
+// dependency has been removed from the root go.mod (tasks 9.2).
+func TestModuleStructure_McpGoRemoved(t *testing.T) {
+	data, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	if bytes.Contains(data, []byte("mark3labs/mcp-go")) {
+		t.Error("mcp-go still declared in root go.mod; must be removed (task 9.2)")
+	}
+}
+
+// TestModuleStructure_GoWorkReferencesModules verifies that go.work references
+// all four mework modules (delta-spec: multi-module workspace).
+func TestModuleStructure_GoWorkReferencesModules(t *testing.T) {
+	data, err := os.ReadFile("../../go.work")
+	if err != nil {
+		t.Fatalf("read go.work: %v", err)
+	}
+	for _, mod := range []string{"./shared", "./server", "./client", "./sandbox"} {
+		if !bytes.Contains(data, []byte(mod)) {
+			t.Errorf("go.work missing use directive for %s", mod)
+		}
+	}
+}

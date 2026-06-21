@@ -9,23 +9,33 @@ COMMIT         := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown
 DATE           := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS        := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: build test vet lint clean install snapshot server test-db
+.PHONY: build test vet lint clean install snapshot server test-db \
+	build-shared build-server build-client build-sandbox build-all \
+	test-shared test-server test-client test-sandbox test-all
 
-build: build-cli build-server
+build: build-mework build-mework-server
 
-build-cli:
-	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
+build-mework:
+	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./client/cmd/mework
 
-build-server:
-	go build -ldflags "$(LDFLAGS)" -o bin/$(SERVER_BINARY) $(SERVER_CMD)
+build-mework-server:
+	go build -ldflags "$(LDFLAGS)" -o bin/$(SERVER_BINARY) ./server/cmd/mework-server
 
-server: build-server
+server: build-mework-server
+
+MODULES := shared server client sandbox tests tools
 
 test:
-	go test -p 1 ./...
+	@for mod in $(MODULES); do \
+		echo "--- $$mod ---"; \
+		cd $$mod && go test -p 1 ./... && cd ..; \
+	done
 
 vet:
-	go vet ./...
+	@for mod in $(MODULES); do \
+		echo "--- $$mod ---"; \
+		cd $$mod && go vet ./... && cd ..; \
+	done
 
 # Start a local postgres container for tests
 test-db:
@@ -34,6 +44,8 @@ test-db:
 # Optional; requires golangci-lint to be installed.
 lint:
 	golangci-lint run ./... || echo "golangci-lint not installed; skipping"
+	@echo "--- import-guard ---"
+	go test ./tools/import-guard/...
 
 install:
 	go install -ldflags "$(LDFLAGS)" $(CMD)
@@ -45,6 +57,36 @@ snapshot:
 
 clean:
 	rm -rf bin dist
+
+# ---- Per-module build/test targets ----
+
+build-shared:
+	cd shared && go build ./...
+
+build-server:
+	cd server && go build ./...
+
+build-client:
+	cd client && go build ./...
+
+build-sandbox:
+	cd sandbox && go build ./...
+
+build-all: build-shared build-server build-client build-sandbox
+
+test-shared:
+	cd shared && go test ./...
+
+test-server:
+	cd server && go test ./...
+
+test-client:
+	cd client && go test ./...
+
+test-sandbox:
+	cd sandbox && go test ./...
+
+test-all: test-shared test-server test-client test-sandbox
 
 # ---- OpenSpec ship-all shortcuts (thin wrappers; the real work runs via the
 # slash command /opsx:ship-all → Workflow({ name: 'ship-all', args: ... }))

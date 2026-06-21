@@ -1,0 +1,10 @@
+go 1.25.7
+
+use (
+	./shared
+	./server
+	./client
+	./sandbox
+	./tests
+	./tools
+)

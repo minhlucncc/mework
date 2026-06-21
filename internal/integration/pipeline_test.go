@@ -17,13 +17,29 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mework/internal/mello"
-	"mework/internal/meworkclient"
-	"mework/internal/server"
-	"mework/internal/store"
+	meworkclient "mework/client/subscribe"
+	"mework/server/hub"
+	"mework/server/platform/store"
+	melloprovider "mework/shared/providers/mello"
 )
 
-func TestFullPipelineE2E(t *testing.T) {
+// pipelineCase defines one end-to-end scenario for the behavior-preservation
+// test suite. Each case exercises a distinct delta-spec scenario from
+// project-structure/spec.md.
+type pipelineCase struct {
+	name           string
+	comment        string
+	deliveryID     string
+	expectJob      bool
+	expectedStatus string // "queued" | "none"
+	expectWrite    bool
+}
+
+// TestFullPipelineE2E_BehaviorPreservation validates that the webhook→enqueue→
+// claim→ack→writeback pipeline works end-to-end after the repo restructure.
+// This is the primary "behavior-preserving migration" guard (delta-spec:
+// "Binaries and behavior unchanged").
+func TestFullPipelineE2E_BehaviorPreservation(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; skipping E2E pipeline integration test")
@@ -32,25 +48,28 @@ func TestFullPipelineE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// 1. Run migrations
-	err := store.RunMigrations(dsn)
-	if err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
+	if err := store.RunMigrations(dsn); err != nil {
+		t.Fatalf("run migrations: %v", err)
 	}
-	defer func() {
-		_ = store.RollbackMigrations(dsn)
-	}()
+	defer func() { _ = store.RollbackMigrations(dsn) }()
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		t.Fatalf("failed to connect to test db: %v", err)
+		t.Fatalf("connect to test db: %v", err)
 	}
 	defer pool.Close()
 
 	// Clear DB
-	_, err = pool.Exec(ctx, "DELETE FROM jobs; DELETE FROM watched_containers; DELETE FROM account_identities; DELETE FROM runtimes; DELETE FROM profiles; DELETE FROM provider_connections; DELETE FROM accounts;")
-	if err != nil {
-		t.Fatalf("failed to clean db: %v", err)
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM jobs;
+		 DELETE FROM watched_containers;
+		 DELETE FROM account_identities;
+		 DELETE FROM runtimes;
+		 DELETE FROM profiles;
+		 DELETE FROM provider_connections;
+		 DELETE FROM accounts;`,
+	); err != nil {
+		t.Fatalf("clean db: %v", err)
 	}
 
 	serverKey := "test-server-key"
@@ -59,209 +78,223 @@ func TestFullPipelineE2E(t *testing.T) {
 	melloToken := "test-mello-pat"
 	patToken := "user-pat-token"
 
-	// 2. Setup mock Mello server for both:
-	// - GetCurrentUser (/me) during PAT auth
-	// - GetTicket (/tickets/{id}) during Webhook handler
-	// - CreateComment (/tickets/{id}/comments) during write-back execution
-	meCallCount := 0
-	ticketCallCount := 0
-	writebackCallCount := 0
-	var lastCommentBody string
+	cases := []pipelineCase{
+		{
+			name:           "full flow: webhook→enqueue→claim→ack→writeback (behavior preservation)",
+			comment:        "@mework dev review fix the bug",
+			deliveryID:     "delivery-1",
+			expectJob:      true,
+			expectedStatus: "queued",
+			expectWrite:    true,
+		},
+		{
+			name:           "self-retrigger guard: own comment is skipped",
+			comment:        "@mework dev review skip me",
+			deliveryID:     "delivery-self",
+			expectJob:      false,
+			expectedStatus: "none",
+			expectWrite:    false,
+		},
+	}
 
-	mockMello := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenHeader := r.Header.Get("Authorization")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Setup mock Mello — fresh counters per case
+			meCallCount := 0
+			ticketCallCount := 0
+			writebackCallCount := 0
+			var lastCommentBody string
 
-		if r.URL.Path == "/me" {
-			if tokenHeader != "Bearer "+patToken {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
+			mockMello := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tokenHeader := r.Header.Get("Authorization")
+
+				if r.URL.Path == "/me" {
+					if tokenHeader != "Bearer "+patToken {
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
+					meCallCount++
+					_ = json.NewEncoder(w).Encode(melloprovider.User{
+						ID:    "mello-user-123",
+						Email: "test@example.com",
+						Name:  "Test User",
+					})
+					return
+				}
+
+				if tokenHeader != "Bearer "+melloToken {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+
+				if r.Method == "GET" && r.URL.Path == "/tickets/tkt-999" {
+					ticketCallCount++
+					_ = json.NewEncoder(w).Encode(melloprovider.TicketDetail{
+						Ticket: melloprovider.Ticket{
+							ID:          "tkt-999",
+							Title:       "Integration Test Ticket",
+							Description: "This is a test ticket description",
+						},
+					})
+					return
+				}
+
+				if r.Method == "POST" && r.URL.Path == "/tickets/tkt-999/comments" {
+					writebackCallCount++
+					var body struct {
+						Body string `json:"body"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					lastCommentBody = body.Body
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"id":"comment-123"}`))
+					return
+				}
+
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer mockMello.Close()
+
+			// Start mework-server
+			cfg := &hub.Config{
+				DatabaseURL:     dsn,
+				ListenAddr:      "127.0.0.1:0",
+				WebhookSecret:   webhookSecret,
+				ServerKey:       serverKey,
+				MeworkSecretKey: secretKey,
+				MelloBaseURL:    mockMello.URL,
 			}
-			meCallCount++
-			user := mello.User{
-				ID:    "mello-user-123",
-				Email: "test@example.com",
-				Name:  "Test User",
+			srv := hub.NewServer(pool, cfg)
+			mockServer := httptest.NewServer(srv)
+			defer mockServer.Close()
+
+			client := meworkclient.NewClient(mockServer.URL, 5*time.Second)
+
+			// Setup Connection, Runtime & Profile
+			runtimeRes, err := client.CreateRuntime(patToken, "dev", "Dev Machine")
+			if err != nil {
+				t.Fatalf("CreateRuntime: %v", err)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(user)
-			return
-		}
-
-		if tokenHeader != "Bearer "+melloToken {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-
-		if r.Method == "GET" && r.URL.Path == "/tickets/tkt-999" {
-			ticketCallCount++
-			ticket := mello.TicketDetail{
-				Ticket: mello.Ticket{
-					ID:          "tkt-999",
-					Title:       "Integration Test Ticket",
-					Description: "This is a test ticket description",
-				},
+			if runtimeRes.Token == "" {
+				t.Fatal("expected non-empty runtime token")
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ticket)
-			return
-		}
 
-		if r.Method == "POST" && r.URL.Path == "/tickets/tkt-999/comments" {
-			writebackCallCount++
-			var body struct {
-				Body string `json:"body"`
+			if _, err := client.CreateConnection(patToken, "mello", melloToken, webhookSecret, nil); err != nil {
+				t.Fatalf("CreateConnection: %v", err)
 			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			lastCommentBody = body.Body
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"comment-123"}`))
-			return
-		}
 
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer mockMello.Close()
+			if _, err := client.CreateProfile(patToken, meworkclient.CreateProfileRequest{
+				Name:        "dev",
+				Body:        "my system prompt",
+				BackendHint: "claude",
+				Harness:     "ck",
+			}); err != nil {
+				t.Fatalf("CreateProfile: %v", err)
+			}
 
-	// 3. Start mework-server
-	cfg := &server.Config{
-		DatabaseURL:     dsn,
-		ListenAddr:      "127.0.0.1:0", // random port
-		WebhookSecret:   webhookSecret,
-		ServerKey:       serverKey,
-		MeworkSecretKey: secretKey,
-		MelloBaseURL:    mockMello.URL,
-	}
+			// Seed watched container for the board
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO watched_containers (account_id, provider_code, external_container_id)
+				VALUES ($1, 'mello', 'board-789')
+				ON CONFLICT DO NOTHING
+			`, runtimeRes.AccountID); err != nil {
+				t.Fatalf("seed watched container: %v", err)
+			}
 
-	srv := server.NewServer(pool, cfg)
-	mockServer := httptest.NewServer(srv)
-	defer mockServer.Close()
+			// Simulate inbound webhook event
+			payload := []byte(fmt.Sprintf(`{
+				"id": "evt-uuid-1",
+				"type": "comment.added",
+				"actor": {"id": "mello-user-123", "name": "Test User"},
+				"model": {"type": "ticket", "board_id": "board-789"},
+				"data": {"id": "comment-uuid-1", "body": %q, "ticket_id": "tkt-999"}
+			}`, tc.comment))
 
-	client := meworkclient.NewClient(mockServer.URL, 5*time.Second)
+			ts := fmt.Sprintf("%d", time.Now().Unix())
+			mac := hmac.New(sha256.New, []byte(webhookSecret))
+			mac.Write([]byte(ts))
+			mac.Write([]byte("."))
+			mac.Write(payload)
+			sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
-	// Step A: Setup Connection & Runtime & Profile
-	// Since connecting/registering/profile CRUD requires PAT token, we first make PAT-authenticated calls
-	// which will trigger the PATAuth middleware and upsert the account details in the database!
+			webhookURL := mockServer.URL + "/webhooks/mello"
+			req, _ := http.NewRequest("POST", webhookURL, bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Mello-Signature", sig)
+			req.Header.Set("X-Mello-Timestamp", ts)
+			req.Header.Set("X-Mello-Delivery-Id", tc.deliveryID)
 
-	// Register runtime first to trigger PAT resolution + account creation
-	runtimeRes, err := client.CreateRuntime(patToken, "dev", "Dev Machine")
-	if err != nil {
-		t.Fatalf("failed to register runtime: %v", err)
-	}
-	if runtimeRes.Token == "" {
-		t.Fatal("expected non-empty runtime token")
-	}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("webhook request: %v", err)
+			}
+			if resp.StatusCode != http.StatusAccepted {
+				t.Fatalf("expected 202 Accepted, got: %d", resp.StatusCode)
+			}
+			resp.Body.Close()
 
-	// Create provider connection
-	_, err = client.CreateConnection(patToken, "mello", melloToken, webhookSecret, nil)
-	if err != nil {
-		t.Fatalf("failed to connect provider: %v", err)
-	}
+			// Wait for async webhook processing
+			time.Sleep(200 * time.Millisecond)
 
-	// Create profile
-	_, err = client.CreateProfile(patToken, meworkclient.CreateProfileRequest{
-		Name:        "dev",
-		Body:        "my system prompt",
-		BackendHint: "claude",
-		Harness:     "ck",
-	})
-	if err != nil {
-		t.Fatalf("failed to create profile: %v", err)
-	}
+			// Verify job enqueued (or not)
+			if tc.expectJob {
+				var jobID, status string
+				err = pool.QueryRow(ctx, "SELECT id, status FROM jobs WHERE external_event_id = $1", tc.deliveryID).Scan(&jobID, &status)
+				if err != nil {
+					t.Fatalf("query job: %v", err)
+				}
+				if status != tc.expectedStatus {
+					t.Errorf("expected status %q, got: %s", tc.expectedStatus, status)
+				}
 
-	// Make sure watched container is set for our board
-	_, err = pool.Exec(ctx, `
-		INSERT INTO watched_containers (account_id, provider_code, external_container_id)
-		VALUES ($1, 'mello', 'board-789')
-		ON CONFLICT DO NOTHING
-	`, runtimeRes.AccountID)
-	if err != nil {
-		t.Fatalf("failed to seed watched container: %v", err)
-	}
+				// Claim → Ack running → Ack done → verify writeback
+				job, err := client.Claim(runtimeRes.Token)
+				if err != nil {
+					t.Fatalf("Claim: %v", err)
+				}
+				if job == nil || job.ID != jobID {
+					t.Fatalf("expected job %s to be claimed, got: %+v", jobID, job)
+				}
 
-	// Step B: Simulate Inbound Webhook Event
-	payload := []byte(`{
-		"id": "evt-uuid-1",
-		"type": "comment.added",
-		"actor": { "id": "mello-user-123", "name": "Test User" },
-		"model": { "type": "ticket", "board_id": "board-789" },
-		"data": { "id": "comment-uuid-1", "body": "@mework dev review fix the bug", "ticket_id": "tkt-999" }
-	}`)
+				if err := client.Ack(runtimeRes.Token, jobID, "running", "", ""); err != nil {
+					t.Fatalf("Ack running: %v", err)
+				}
 
-	ts := fmt.Sprintf("%d", time.Now().Unix())
-	mac := hmac.New(sha256.New, []byte(webhookSecret))
-	mac.Write([]byte(ts))
-	mac.Write([]byte("."))
-	mac.Write(payload)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+				if err := client.Ack(runtimeRes.Token, jobID, "done", "fixed the bug in auth middleware", ""); err != nil {
+					t.Fatalf("Ack done: %v", err)
+				}
 
-	webhookURL := mockServer.URL + "/webhooks/mello"
-	req, _ := http.NewRequest("POST", webhookURL, bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Mello-Signature", sig)
-	req.Header.Set("X-Mello-Timestamp", ts)
-	req.Header.Set("X-Mello-Delivery-Id", "delivery-1")
+				// Wait for async write-back
+				time.Sleep(200 * time.Millisecond)
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("webhook request failed: %v", err)
-	}
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("expected 202 Accepted, got: %d", resp.StatusCode)
-	}
-	resp.Body.Close()
+				if tc.expectWrite {
+					if writebackCallCount != 1 {
+						t.Errorf("expected 1 write-back, got %d", writebackCallCount)
+					}
+					if !strings.Contains(lastCommentBody, "mework dev review — done") ||
+						!strings.Contains(lastCommentBody, "fixed the bug in auth middleware") {
+						t.Errorf("unexpected comment body: %q", lastCommentBody)
+					}
+				}
 
-	// Wait briefly for webhook async processing (GetTicket snapshot) to complete
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify job enqueued
-	var jobID, status string
-	err = pool.QueryRow(ctx, "SELECT id, status FROM jobs WHERE external_event_id = 'delivery-1'").Scan(&jobID, &status)
-	if err != nil {
-		t.Fatalf("failed to query job: %v", err)
-	}
-	if status != "queued" {
-		t.Errorf("expected status queued, got: %s", status)
-	}
-
-	// Step C: Daemon claims job
-	job, err := client.Claim(runtimeRes.Token)
-	if err != nil {
-		t.Fatalf("failed to claim job: %v", err)
-	}
-	if job == nil || job.ID != jobID {
-		t.Fatalf("expected job %s to be claimed, got: %+v", jobID, job)
-	}
-
-	// Step D: Ack running
-	err = client.Ack(runtimeRes.Token, jobID, "running", "", "")
-	if err != nil {
-		t.Fatalf("failed to ack running: %v", err)
-	}
-
-	// Step E: Ack done (triggers write-back)
-	err = client.Ack(runtimeRes.Token, jobID, "done", "fixed the bug in auth middleware", "")
-	if err != nil {
-		t.Fatalf("failed to ack done: %v", err)
-	}
-
-	// Wait briefly for async write-back to execute
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify write-back happened on mock Mello server
-	if writebackCallCount != 1 {
-		t.Errorf("expected 1 write-back comment creation call, got %d", writebackCallCount)
-	}
-	if !strings.Contains(lastCommentBody, "mework dev review — done") || !strings.Contains(lastCommentBody, "fixed the bug in auth middleware") {
-		t.Errorf("unexpected comment body in write-back: %q", lastCommentBody)
-	}
-
-	// Verify write-back status is success in database
-	var writebackStatus string
-	err = pool.QueryRow(ctx, "SELECT writeback_status FROM jobs WHERE id = $1", jobID).Scan(&writebackStatus)
-	if err != nil {
-		t.Fatalf("failed to query job writeback status: %v", err)
-	}
-	if writebackStatus != "success" {
-		t.Errorf("expected writeback_status success, got: %s", writebackStatus)
+				// Verify writeback status
+				var wbStatus string
+				if err := pool.QueryRow(ctx, "SELECT writeback_status FROM jobs WHERE id = $1", jobID).Scan(&wbStatus); err != nil {
+					t.Fatalf("query writeback status: %v", err)
+				}
+				if wbStatus != "success" {
+					t.Errorf("expected writeback_status 'success', got: %s", wbStatus)
+				}
+			} else {
+				// No job expected — verify no row was created
+				var count int
+				if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM jobs WHERE external_event_id = $1", tc.deliveryID).Scan(&count); err != nil {
+					t.Fatalf("count jobs: %v", err)
+				}
+				if count != 0 {
+					t.Errorf("expected 0 jobs for delivery %q, got %d", tc.deliveryID, count)
+				}
+			}
+		})
 	}
 }

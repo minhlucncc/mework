@@ -1,9 +1,9 @@
 name: CI
 
 # Quality-gate pipeline (shift-left): the same gates the /opsx:ship verify phase
-# runs locally — go build, make vet, make test — but with a real Postgres so the
-# DB-backed tests actually execute instead of skipping. See the
-# `ci-cd-and-automation` skill.
+# runs locally — lint, go build, make vet, make test — but with a real Postgres
+# so the DB-backed tests actually execute instead of skipping. Each module is
+# also built and tested independently.
 
 on:
   push:
@@ -20,9 +20,27 @@ permissions:
   contents: read
 
 jobs:
+  # --- Import-guard lint: run first, fast feedback on boundary violations ---
+  lint:
+    name: Lint (import-guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint
+        run: make lint
+
+  # --- Full build + vet + test (with Postgres) ---
   build-and-test:
     name: build · vet · test
     runs-on: ubuntu-latest
+    needs: [lint]
 
     services:
       postgres:
@@ -62,3 +80,28 @@ jobs:
 
       - name: Test (serialized; -p 1 — tests share one Postgres DB)
         run: make test
+
+  # --- Per-module independent build and test ---
+  module-build-and-test:
+    name: ${{ matrix.module }} (build + test)
+    runs-on: ubuntu-latest
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [shared, server, client, sandbox]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build ${{ matrix.module }}
+        run: make build-${{ matrix.module }}
+
+      - name: Test ${{ matrix.module }}
+        run: make test-${{ matrix.module }}

@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mework/internal/server/registry"
-	"mework/internal/store"
+	"mework/server/registry"
+	"mework/server/platform/store"
 )
 
 // harness.go wires the e2e World to the real subsystems so the tenancy scenarios
