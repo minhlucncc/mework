@@ -10,6 +10,9 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 
 ## [Unreleased]
 
+### Added
+- Versioned agent catalog with dispatch, permission model, and auth integration (c0004-agent-catalog).
+
 ### Changed
 
 - Normalize the parsed workflow keyword to canonical lowercase so triggers like `@mework dev Review …` map to `review` (c0007-normalize-workflow-keyword).
