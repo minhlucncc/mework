@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestDefaultBackendsIncludesAllSupported(t *testing.T) {
+	// The default backend list must cover every supported AI CLI, including the
+	// new windows-claude and v0 backends — added without any schema migration
+	// (provider-agnostic invariant).
+	want := []string{"claude", "codex", "opencode", "windows-claude", "v0"}
+
+	have := make(map[string]bool, len(DefaultBackends))
+	for _, name := range DefaultBackends {
+		have[name] = true
+	}
+
+	for _, tt := range want {
+		t.Run(tt, func(t *testing.T) {
+			if !have[tt] {
+				t.Errorf("DefaultBackends missing %q; got %v", tt, DefaultBackends)
+			}
+		})
+	}
+}
+
 func TestDetectFindsBackendOnPath(t *testing.T) {
 	dir := t.TempDir()
 	// Create a fake executable named like a backend.

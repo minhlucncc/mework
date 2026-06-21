@@ -28,13 +28,13 @@ MODULES := libs/shared libs/server libs/client libs/sandbox libs/tests libs/tool
 test:
 	@for mod in $(MODULES); do \
 		echo "--- $$mod ---"; \
-		cd $$mod && go test -p 1 ./... && cd ..; \
+		(cd $$mod && go test -p 1 ./...) || exit 1; \
 	done
 
 vet:
 	@for mod in $(MODULES); do \
 		echo "--- $$mod ---"; \
-		cd $$mod && go vet ./... && cd ..; \
+		(cd $$mod && go vet ./...) || exit 1; \
 	done
 
 # Start a local postgres container for tests

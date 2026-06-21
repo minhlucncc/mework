@@ -6,7 +6,7 @@ import (
 )
 
 // DefaultBackends lists the AI CLIs the daemon supports, in preference order.
-var DefaultBackends = []string{"claude", "codex", "opencode"}
+var DefaultBackends = []string{"claude", "codex", "opencode", "windows-claude", "v0"}
 
 // Backend is a resolved AI CLI: its name and absolute path.
 type Backend struct {
