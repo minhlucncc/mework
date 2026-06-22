@@ -24,8 +24,10 @@ at startup** if a required one is missing.
 | `LISTEN_ADDR` | string | no | `:8080` | HTTP listen address |
 | `WEBHOOK_SECRET` | string | no | — | Loaded but not enforced; per-connection webhook secrets in the DB are used instead |
 | `MELLO_BASE_URL` | string | no | `https://mello.mezon.vn/api/v1` | Mello REST base URL |
+| `CHANNEL_ROUTING_ENABLED` | bool | no | `false` | Opt-in to the experimental per-resource channel auto-provisioning path. Off by default — a default deployment uses the legacy webhook → job → claim → write-back pipeline. |
 
-> Use long, random, independent values for `SERVER_KEY` and `MEWORK_SECRET_KEY`.
+> Use long, random, independent values for `SERVER_KEY` and `MEWORK_SECRET_KEY`
+> (each **at least 16 characters** — the server fails fast on shorter keys).
 > Losing `MEWORK_SECRET_KEY` means stored provider credentials can no longer be
 > unsealed (connections must be reconnected); rotating it requires re-sealing.
 

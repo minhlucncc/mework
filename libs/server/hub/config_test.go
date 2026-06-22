@@ -5,6 +5,33 @@ import (
 	"testing"
 )
 
+func TestLoadConfig_ChannelRoutingDefaultOff(t *testing.T) {
+	const okKey = "0123456789abcdef"
+	t.Setenv("DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("SERVER_KEY", okKey)
+	t.Setenv("MEWORK_SECRET_KEY", okKey)
+
+	// Unset → disabled by default.
+	t.Setenv("CHANNEL_ROUTING_ENABLED", "")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ChannelRoutingEnabled {
+		t.Error("channel routing must be OFF by default")
+	}
+
+	// Explicit truthy → enabled.
+	t.Setenv("CHANNEL_ROUTING_ENABLED", "true")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ChannelRoutingEnabled {
+		t.Error("CHANNEL_ROUTING_ENABLED=true must enable channel routing")
+	}
+}
+
 func TestLoadConfig_KeyStrength(t *testing.T) {
 	const okKey = "0123456789abcdef" // 16 chars
 

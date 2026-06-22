@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"mework/libs/server/bus"
 	"mework/libs/server/storage"
@@ -22,6 +23,12 @@ type Config struct {
 	ServerKey       string
 	MeworkSecretKey string
 	MelloBaseURL    string
+
+	// ChannelRoutingEnabled turns on the experimental per-resource channel
+	// auto-provisioning path. Disabled by default — a default deployment uses the
+	// legacy webhook → job → claim → write-back pipeline. Set via
+	// CHANNEL_ROUTING_ENABLED.
+	ChannelRoutingEnabled bool
 
 	// Storage configures the object storage backend.
 	Storage storage.Config
@@ -87,13 +94,17 @@ func LoadConfig() (*Config, error) {
 		storageCfg.Bucket = "mework"
 	}
 
+	// Experimental channel routing is opt-in, off by default.
+	channelRouting, _ := strconv.ParseBool(os.Getenv("CHANNEL_ROUTING_ENABLED"))
+
 	return &Config{
-		DatabaseURL:     dbURL,
-		ListenAddr:      listenAddr,
-		WebhookSecret:   webhookSecret,
-		ServerKey:       serverKey,
-		MeworkSecretKey: meworkSecretKey,
-		MelloBaseURL:    melloBaseURL,
-		Storage:         storageCfg,
+		DatabaseURL:           dbURL,
+		ListenAddr:            listenAddr,
+		WebhookSecret:         webhookSecret,
+		ServerKey:             serverKey,
+		MeworkSecretKey:       meworkSecretKey,
+		MelloBaseURL:          melloBaseURL,
+		ChannelRoutingEnabled: channelRouting,
+		Storage:               storageCfg,
 	}, nil
 }

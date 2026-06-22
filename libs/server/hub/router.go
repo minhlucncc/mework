@@ -70,7 +70,9 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 	}
 
 	// Channel routing infrastructure.
-	channelFeature := channel.NewFeatureFlag(true) // On by default for E2E; use SetEnabled(false) in production.
+	// Experimental channel routing is opt-in (CHANNEL_ROUTING_ENABLED), off by
+	// default — a default deployment uses the legacy webhook pipeline.
+	channelFeature := channel.NewFeatureFlag(cfg.ChannelRoutingEnabled)
 	channelReg := channel.NewPostgresRegistry(pool)
 	if err := channelReg.PopulateCache(context.Background()); err != nil {
 		log.Printf("Failed to populate channel cache: %v", err)
