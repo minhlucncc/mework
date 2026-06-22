@@ -3,9 +3,7 @@
 ## Purpose
 
 Define the message bus transport layer that connects server components (webhook ingestion, orchestrator, operators) to subscribing clients (agents, sandboxes, runners) over a Server-Sent Events stream with topic-based publish/subscribe, resumable delivery, delivery acknowledgement, and a pluggable broker backend interface. Owned by `internal/server/messagebus`.
-
 ## Requirements
-
 ### Requirement: Topic-based publish
 
 The server SHALL publish messages to named **topics**. Producers (channel router, webhook ingestion, orchestrator, operators) MUST publish to a topic without knowing which clients are subscribed, and the set of subscribers MAY change at any time. The topic namespace SHALL include `channel.<provider>.<resource_id>.<event_type>` for per-resource event delivery alongside the existing `runner.<id>.dispatch` and `session.<id>.control` patterns.
@@ -106,17 +104,36 @@ The broker SHALL NOT materialize or buffer non-matching messages for a subscribe
 
 ### Requirement: Session control channel and push to sandbox
 
-The bus SHALL provide a per-session control channel (`session.<id>.control`) that the hub publishes to and that a running sandbox/agent consumes, so the hub can push control messages (e.g. cancel, input) down to an in-flight run. Control channels MUST be isolated per session.
+The bus SHALL provide **two per-session topics with a single direction each**, isolated per
+session:
 
-#### Scenario: Push a control message to a running sandbox
+- `session.<id>.input` — **hub → runner**: carries chat turns and control messages (e.g.
+  cancel, close) down to the running sandbox/agent, which subscribes to it.
+- `session.<id>.control` — **runner → hub**: carries the session's outgoing events
+  (`token`, `message`, `done`, `error`) up from the runner; the hub subscribes and relays
+  them to session subscribers.
 
-- **WHEN** the hub publishes a control message to `session.s1.control` while session `s1` has a running sandbox subscribed to it
-- **THEN** the running agent receives the control message over its control channel
+A subscriber on one session's topics MUST NOT receive another session's messages, and a
+turn published to a session's input topic MUST NOT be delivered on that session's control
+topic (no cross-direction leakage).
 
-#### Scenario: Control channels are isolated per session
+#### Scenario: Push a turn to a running sandbox
 
-- **WHEN** a control message is published to `session.s2.control`
-- **THEN** a subscriber on `session.s1.control` receives nothing (no cross-session leakage)
+- **WHEN** the hub publishes a chat turn to `session.s1.input` while session `s1` has a
+  running sandbox subscribed to it
+- **THEN** the running agent receives the turn over its input channel
+
+#### Scenario: Outgoing events flow on the control topic
+
+- **WHEN** the runner publishes a `token`/`message`/`done` event for session `s1`
+- **THEN** it is published on `session.s1.control` and the hub relays it to that session's
+  subscribers
+
+#### Scenario: Input and control are isolated and single-direction
+
+- **WHEN** a turn is published to `session.s1.input`
+- **THEN** a subscriber on `session.s1.control` receives nothing, and a subscriber on
+  `session.s2.input` receives nothing (no cross-session, no cross-direction leakage)
 
 ### Requirement: Bounded per-subscriber backpressure
 
@@ -131,3 +148,4 @@ The bus SHALL absorb a slow subscriber without blocking publishers or other subs
 
 - **WHEN** messages are published concurrently to a single topic
 - **THEN** each subscriber receives that topic's messages in per-topic order (best-effort; no global cross-topic ordering is guaranteed)
+
