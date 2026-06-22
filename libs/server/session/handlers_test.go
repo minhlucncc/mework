@@ -252,12 +252,16 @@ func TestSendMessage_OwnerPublishesToInput(t *testing.T) {
 
 	select {
 	case ev := <-inputSub.Events():
-		var msg ChatMessage
-		if err := json.Unmarshal(ev.Message.Payload, &msg); err != nil {
+		// The handler wraps the ChatMessage in an inputMessage envelope
+		// so the daemon's decoder can parse it.  Unwrap here.
+		var wrapped struct {
+			Message ChatMessage `json:"message"`
+		}
+		if err := json.Unmarshal(ev.Message.Payload, &wrapped); err != nil {
 			t.Fatalf("unmarshal published turn: %v", err)
 		}
-		if msg.Content != "hello" || msg.Role != RoleUser {
-			t.Fatalf("published turn = %+v, want hello/user", msg)
+		if wrapped.Message.Content != "hello" || wrapped.Message.Role != RoleUser {
+			t.Fatalf("published turn = %+v, want hello/user", wrapped)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("turn was not published to the input topic")

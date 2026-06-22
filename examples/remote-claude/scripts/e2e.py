@@ -360,6 +360,18 @@ def main():
         log("PASS — full server → daemon → sandbox → chat flow verified")
         return 0
     finally:
+        # Stop the daemon first via its health endpoint (the Popen below only
+        # captures the parent `daemon start` process, which spawns a detached
+        # child and exits — killing the Popen would be a no-op).
+        try:
+            subprocess.run(
+                [str(bin_path), "daemon", "stop"],
+                env={**os.environ, "MEWORK_HOME": str(home)},
+                capture_output=True, timeout=15,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        # Kill all tracked subprocesses.
         for name, p in procs.items():
             try:
                 p.send_signal(signal.SIGTERM)
