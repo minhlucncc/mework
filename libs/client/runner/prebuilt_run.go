@@ -33,6 +33,9 @@ type RunDeps struct {
 	ManagerFor func(engine string) *runtime.Manager
 	// SandboxID overrides the sandbox ID; when empty it is derived from the ref.
 	SandboxID string
+	// Workspace, when set, binds the run's sandbox to a working directory. The
+	// zero value leaves the run unbound (SandboxID-derived workdir).
+	Workspace core.Workspace
 }
 
 // RunByReference runs a prebuilt definition by reference as a one-shot: it
@@ -69,6 +72,7 @@ func RunByReference(ctx context.Context, ref, instruction string, deps RunDeps) 
 		BackendName: def.Backend,
 		Task:        instruction,
 		SandboxID:   sandboxID,
+		Workspace:   deps.Workspace,
 	}
 	// Container engines materialize from the pinned image; local ignores it.
 	if def.UsesImage() {

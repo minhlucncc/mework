@@ -171,6 +171,74 @@ This test:
 4. Verifies Claude Code was invoked correctly
 5. Shows the output
 
+## Workspace-bound sessions
+
+A session can be **bound to a workspace directory** so the agent reads and writes
+files in place. The workspace carries its own definition in a `mework.yml` (plus
+optional `.claude/settings.json`), and the very same fixture drives **two start
+modes**:
+
+- **Local-direct** *(no server, no Postgres)* — a `FileDefinitionResolver` reads
+  `mework.yml` from the workspace dir, you mint a local `OpSpawn` grant, and
+  `runner.StartWorkspaceSession` opens a session whose sandbox is bound to that
+  dir. Nothing contacts the server.
+- **Server** — the same metadata is published to the catalog
+  (`POST /api/v1/agents/{name}/versions`), resolved back with an
+  `HTTPDefinitionResolver`, and a (server-issued) grant authorizes the run. The
+  **agent still runs as a sandbox on the client** — the server is a gateway +
+  registry only and never spawns a sandbox.
+
+In both modes the turn text is fed to the backend over **stdin (never argv)**,
+the backend runs with its CWD set to the bound workspace, and produced artifacts
+persist on disk and are **readable back** (list / read / update) via
+`workspacefs.NewLocal`.
+
+### `mework.yml`
+
+```yaml
+name: workspace-agent
+version: 1.0.0
+engine: local        # local | docker | cloudflare | custom
+backend: claude       # command[0]; the turn arrives on stdin
+```
+
+The local engine runs `backend` as `command[0]` with the process working
+directory set to the workspace. (The example test rewrites `backend` to the
+absolute path of `testdata/stub-backend.sh` so the run is deterministic and needs
+no real Claude Code.)
+
+### Pack → push → pull
+
+A bound workspace round-trips through the catalog bundle form:
+
+- **Pack** — `catalog.Pack(dir)` zips the workspace (`mework.yml`,
+  `.claude/settings.json`, and ordinary files, preserving nested paths) into a
+  bundle you push to the server.
+- **Pull** — `catalog.ExtractWorkspace(bundle, dest)` recreates the workspace in a
+  fresh directory with identical contents, ready to start a session against.
+
+### Workspace example test
+
+```bash
+cd examples/remote-claude
+go test -v -count=1 -run TestWorkspaceSession
+```
+
+The suite proves the whole feature with a deterministic stub backend:
+
+1. **`TestWorkspaceSession_LocalDirect`** — local-direct start (no DB): resolve
+   from `mework.yml`, send a task over stdin, assert the artifact lands in the
+   bound workspace.
+2. **`TestWorkspaceSession_PackPushPullRoundTrip`** — pack the workspace, pull it
+   into a fresh dir, assert `mework.yml` + `.claude/settings.json` + files
+   round-trip.
+3. **`TestWorkspaceSession_ArtifactsReadableBack`** — after a turn, list / read /
+   update / re-read the produced artifact via `workspacefs`.
+4. **`TestWorkspaceSession_ServerMode`** — Postgres-gated (`TEST_DATABASE_URL`):
+   stand up a real `hub.NewServer` behind `httptest`, register the definition,
+   resolve it over HTTP, and run the bound session on the client. Skips cleanly
+   when `TEST_DATABASE_URL` is unset.
+
 ## Extending
 
 The same pattern works for:

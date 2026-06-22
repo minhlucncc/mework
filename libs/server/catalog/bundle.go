@@ -18,9 +18,12 @@ type SandboxMetadata struct {
 	Author  string `yaml:"author,omitempty"`
 }
 
-// validateBundle checks that the zip bytes contain a valid sandbox bundle:
-// sandbox.yaml must exist at root with required fields, and definition.md
-// must also be present at root.
+// validateBundle checks that the zip bytes contain a valid bundle. Two manifest
+// forms are accepted:
+//   - a workspace bundle: mework.yml at root carrying name + backend
+//     (no definition.md required); or
+//   - a legacy sandbox bundle: sandbox.yaml at root (with spec + backend) plus
+//     definition.md.
 func validateBundle(zipBytes []byte) error {
 	if len(zipBytes) == 0 {
 		return errors.New("empty bundle payload")
@@ -31,29 +34,46 @@ func validateBundle(zipBytes []byte) error {
 		return fmt.Errorf("invalid zip: %w", err)
 	}
 
-	var hasSandboxYAML, hasDefinitionMD bool
-	var sandboxContent []byte
+	var hasSandboxYAML, hasDefinitionMD, hasMeworkYML bool
+	var sandboxContent, meworkContent []byte
 
 	for _, f := range zr.File {
 		switch f.Name {
 		case "sandbox.yaml":
 			hasSandboxYAML = true
-			rc, err := f.Open()
+			sandboxContent, err = readZipEntry(f)
 			if err != nil {
-				return fmt.Errorf("open sandbox.yaml: %w", err)
+				return err
 			}
-			sandboxContent, err = io.ReadAll(rc)
-			rc.Close()
+		case "mework.yml":
+			hasMeworkYML = true
+			meworkContent, err = readZipEntry(f)
 			if err != nil {
-				return fmt.Errorf("read sandbox.yaml: %w", err)
+				return err
 			}
 		case "definition.md":
 			hasDefinitionMD = true
 		}
 	}
 
+	// Workspace bundle: mework.yml manifest, name + backend required.
+	if hasMeworkYML {
+		meta := parseSandboxYAML(string(meworkContent))
+		var missing []string
+		if meta.Name == "" {
+			missing = append(missing, "name")
+		}
+		if meta.Backend == "" {
+			missing = append(missing, "backend")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("mework.yml missing required fields: %s", strings.Join(missing, ", "))
+		}
+		return nil
+	}
+
 	if !hasSandboxYAML {
-		return errors.New("bundle must contain sandbox.yaml at root")
+		return errors.New("bundle must contain a manifest (mework.yml or sandbox.yaml) at root")
 	}
 	if !hasDefinitionMD {
 		return errors.New("bundle must contain definition.md at root")
@@ -72,6 +92,20 @@ func validateBundle(zipBytes []byte) error {
 	}
 
 	return nil
+}
+
+// readZipEntry opens and reads the full contents of a zip file entry.
+func readZipEntry(f *zip.File) ([]byte, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", f.Name, err)
+	}
+	defer rc.Close()
+	content, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", f.Name, err)
+	}
+	return content, nil
 }
 
 // parseSandboxYAML does a minimal parse of a sandbox.yaml file to extract

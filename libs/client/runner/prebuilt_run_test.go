@@ -234,6 +234,55 @@ func TestRunByReference(t *testing.T) {
 	}
 }
 
+// TestRunByReference_WorkspaceBinding asserts that a workspace carried on
+// RunDeps is threaded into the core.RunSpec the engine is started with, and that
+// the unbound path leaves spec.Workspace at its zero value. Realises delta-spec
+// scenarios "Agent works in the bound workspace" and "Unbound run is unchanged".
+func TestRunByReference_WorkspaceBinding(t *testing.T) {
+	defs := map[string]sandbox.SandboxBundleMetadata{
+		"local-claude@1.0.0": {
+			Name: "local-claude", Version: "1.0.0", Engine: "local", Backend: "claude",
+		},
+	}
+	bound := core.Workspace{ID: "ws-1", Path: "/tmp/work/ws-1"}
+
+	tests := []struct {
+		name      string
+		workspace core.Workspace
+		want      core.Workspace
+	}{
+		{
+			name:      "workspace bound: threaded into RunSpec.Workspace",
+			workspace: bound,
+			want:      bound,
+		},
+		{
+			name:      "no workspace: RunSpec.Workspace is the zero value (unbound unchanged)",
+			workspace: core.Workspace{},
+			want:      core.Workspace{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			drv := &fakeDriver{}
+			deps := RunDeps{
+				Resolver:   fakeResolver{defs: defs},
+				ManagerFor: func(string) *runtime.Manager { return runtime.NewManager(drv) },
+				Workspace:  tt.workspace,
+			}
+
+			res := RunByReference(context.Background(), "local-claude@1.0.0", "do the task", deps)
+			if res.Error != "" {
+				t.Fatalf("run should succeed, got error %q", res.Error)
+			}
+			if drv.lastSpec.Workspace != tt.want {
+				t.Errorf("RunSpec.Workspace = %+v, want %+v", drv.lastSpec.Workspace, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunByReference_OneAgentPerSandbox(t *testing.T) {
 	defs := map[string]sandbox.SandboxBundleMetadata{
 		"local-claude@1.0.0": {

@@ -39,6 +39,9 @@ type SessionDeps struct {
 	Sessions *session.Manager
 	// GrantKey verifies grant signatures; nil accepts unsigned grants.
 	GrantKey []byte
+	// Workspace, when set, binds the session's sandbox to a working directory.
+	// The zero value leaves the run unbound (SandboxID-derived workdir).
+	Workspace core.Workspace
 }
 
 // Session drives a long-lived sandbox for one interactive, multi-turn chat. The
@@ -91,6 +94,7 @@ func OpenSession(ctx context.Context, ref string, caller Caller, deps SessionDep
 		AgentID:     def.Name,
 		BackendName: def.Backend,
 		SandboxID:   strings.ReplaceAll(ref, "@", "-") + "-" + string(info.ID),
+		Workspace:   deps.Workspace,
 	}
 	if def.UsesImage() {
 		spec.Image = def.Image

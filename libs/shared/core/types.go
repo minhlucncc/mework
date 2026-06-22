@@ -61,6 +61,9 @@ type RunSpec struct {
 	Env         map[string]string
 	ResourceLimits *ResourceLimits
 	Timeout      time.Duration
+	// Workspace, when set, binds the run to a working directory. The zero value
+	// means no workspace is bound and engines fall back to SandboxID-derived dirs.
+	Workspace   Workspace
 }
 
 // Result is the output of a completed agent run.

@@ -105,6 +105,7 @@ type liveFakeDriver struct {
 	destroyCalls int
 	sb           *liveFakeSandbox
 	blockTurn    bool
+	lastSpec     core.RunSpec
 }
 
 func (d *liveFakeDriver) Caps() core.SandboxCaps { return core.SandboxCaps{DriverName: "live-fake"} }
@@ -113,6 +114,7 @@ func (d *liveFakeDriver) Start(_ context.Context, spec core.RunSpec) (ports.Sand
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.startCalls++
+	d.lastSpec = spec
 	if d.sb == nil {
 		d.sb = &liveFakeSandbox{
 			id:        spec.SandboxID,
@@ -142,6 +144,12 @@ func (d *liveFakeDriver) destroys() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.destroyCalls
+}
+
+func (d *liveFakeDriver) startedSpec() core.RunSpec {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lastSpec
 }
 
 const (
@@ -426,6 +434,51 @@ func TestInteractiveSession_AuthorizationEnforced(t *testing.T) {
 			}
 			if !tt.wantAllow && err == nil {
 				t.Errorf("send should be denied for %s, but it succeeded", tt.name)
+			}
+		})
+	}
+}
+
+// TestInteractiveSession_WorkspaceBinding asserts that a workspace carried on
+// SessionDeps is threaded into the core.RunSpec the engine is started with, and
+// that the unbound path leaves spec.Workspace at its zero value. Realises
+// delta-spec scenarios "Agent works in the bound workspace" and
+// "Unbound run is unchanged".
+func TestInteractiveSession_WorkspaceBinding(t *testing.T) {
+	bound := core.Workspace{ID: "ws-1", Path: t.TempDir()}
+
+	tests := []struct {
+		name      string
+		workspace core.Workspace
+		want      core.Workspace
+	}{
+		{
+			name:      "workspace bound: threaded into RunSpec.Workspace",
+			workspace: bound,
+			want:      bound,
+		},
+		{
+			name:      "no workspace: RunSpec.Workspace is the zero value (unbound unchanged)",
+			workspace: core.Workspace{},
+			want:      core.Workspace{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, drv, _ := newSessionDeps(t, 0, false)
+			deps.Workspace = tt.workspace
+			caller := ownerCaller(t)
+			ctx := context.Background()
+
+			sess, err := OpenSession(ctx, "local-claude@1.0.0", caller, deps)
+			if err != nil {
+				t.Fatalf("OpenSession: %v", err)
+			}
+			t.Cleanup(func() { _ = sess.Close(ctx, caller) })
+
+			if got := drv.startedSpec().Workspace; got != tt.want {
+				t.Errorf("RunSpec.Workspace = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

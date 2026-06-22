@@ -69,6 +69,18 @@ func (m *Manager) Start(ctx context.Context, spec core.RunSpec) (ports.Sandbox, 
 	if err != nil {
 		return nil, err
 	}
+
+	// Mount the bound workspace into the sandbox. The local engine binds its
+	// workdir directly and leaves Workspace.Path empty, so an unbound spec is a
+	// no-op here (the unbound path is unchanged).
+	if spec.Workspace.Path != "" {
+		if err := s.Mount(ctx, spec.Workspace, m.WorkspaceMount()); err != nil {
+			// Clean up the just-started sandbox rather than leaking it.
+			_ = m.driver.Destroy(ctx, s.ID())
+			return nil, fmt.Errorf("mount workspace into sandbox %q: %w", s.ID(), err)
+		}
+	}
+
 	m.running[s.ID()] = s
 	return s, nil
 }
@@ -126,9 +138,10 @@ func (m *Manager) Hooks() []string {
 	return nil
 }
 
-// WorkspaceMount returns the path where the workspace is mounted.
+// WorkspaceMount returns the path where the bound workspace is mounted inside
+// the sandbox.
 func (m *Manager) WorkspaceMount() string {
-	return ""
+	return "/workspace"
 }
 
 // Teardown cleans up all sandbox environments.

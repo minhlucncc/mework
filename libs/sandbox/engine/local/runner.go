@@ -75,7 +75,12 @@ func (s *localSandbox) Signals(ctx context.Context, sig string) error {
 // Start creates a working directory and returns a sandbox. No process is
 // started until Exec is called.
 func (d *Driver) Start(ctx context.Context, spec core.RunSpec) (ports.Sandbox, error) {
-	workDir := spec.SandboxID
+	// A bound workspace selects the working directory; otherwise fall back to
+	// the SandboxID-derived directory (today's behavior).
+	workDir := spec.Workspace.Path
+	if workDir == "" {
+		workDir = spec.SandboxID
+	}
 	if workDir == "" {
 		workDir = filepath.Join(os.TempDir(), "mework-sandbox", spec.AgentID)
 	}

@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"mework/libs/sandbox/agent"
+	"mework/libs/shared/core"
 )
 
 // TestRunFeedsPromptViaStdin verifies the prompt reaches the backend on stdin
@@ -33,6 +35,86 @@ func TestRunFeedsPromptViaStdin(t *testing.T) {
 	}
 	if _, err := os.Stat(work); err != nil {
 		t.Errorf("work dir not created: %v", err)
+	}
+}
+
+// TestStart_WorkspaceBoundWorkingDir verifies the local engine's working
+// directory selection: when a workspace is bound (spec.Workspace.Path set), the
+// agent runs in that directory (a file the agent writes lands there). When no
+// workspace is bound, the working directory is derived from SandboxID as today.
+// Realises delta-spec scenarios "Agent works in the bound workspace" and
+// "Unbound run is unchanged".
+func TestStart_WorkspaceBoundWorkingDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses unix sh")
+	}
+	sh := "/bin/sh"
+	if _, err := os.Stat(sh); err != nil {
+		t.Skip("sh not available")
+	}
+
+	tests := []struct {
+		name string
+		// buildSpec returns the RunSpec and the directory the agent's relative
+		// write is expected to land in.
+		buildSpec func(t *testing.T) (core.RunSpec, string)
+	}{
+		{
+			name: "workspace bound: file lands in the bound workspace dir",
+			buildSpec: func(t *testing.T) (core.RunSpec, string) {
+				t.Helper()
+				ws := t.TempDir()
+				return core.RunSpec{
+					AgentID:   "agent-ws",
+					SandboxID: "sandbox-should-be-ignored",
+					Workspace: core.Workspace{ID: "w1", Path: ws},
+				}, ws
+			},
+		},
+		{
+			name: "workspace unbound: workdir derived from SandboxID (unchanged)",
+			buildSpec: func(t *testing.T) (core.RunSpec, string) {
+				t.Helper()
+				id := filepath.Join(t.TempDir(), "sandbox-id-dir")
+				return core.RunSpec{
+					AgentID:   "agent-nows",
+					SandboxID: id,
+				}, id
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, wantDir := tt.buildSpec(t)
+			drv := New()
+			sb, err := drv.Start(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			// The agent writes a marker file using a RELATIVE path, so where it
+			// lands reveals the sandbox working directory.
+			const marker = "artifact.txt"
+			var out bytes.Buffer
+			exit, execErr := sb.Exec(
+				context.Background(),
+				[]string{sh, "-c", "printf agent-output > " + marker},
+				strings.NewReader(""),
+				&out, &out,
+			)
+			if execErr != nil || exit != 0 {
+				t.Fatalf("exec failed: exit=%d err=%v out=%q", exit, execErr, out.String())
+			}
+
+			got, err := os.ReadFile(filepath.Join(wantDir, marker))
+			if err != nil {
+				t.Fatalf("expected artifact in %q: %v", wantDir, err)
+			}
+			if string(got) != "agent-output" {
+				t.Errorf("artifact content = %q, want %q", got, "agent-output")
+			}
+		})
 	}
 }
 
