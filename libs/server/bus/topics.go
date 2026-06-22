@@ -10,9 +10,18 @@ const (
 	// Use FormatTopic to produce "runner.<id>.dispatch".
 	TopicRunnerDispatch = "runner.%s.dispatch"
 
-	// TopicSessionControl is the topic template for session control messages.
-	// Use FormatTopic to produce "session.<id>.control".
+	// TopicSessionControl is the topic template for the session's outgoing
+	// (runner → hub) event channel. Use FormatTopic to produce
+	// "session.<id>.control". The runner publishes ChatEvents here and the hub
+	// subscribes and relays them to session subscribers.
 	TopicSessionControl = "session.%s.control"
+
+	// TopicSessionInput is the topic template for the session's inbound
+	// (hub → runner) channel. Use FormatTopic to produce "session.<id>.input".
+	// The hub publishes chat turns and control messages (cancel/close) here and
+	// the running sandbox/agent subscribes to it. Keeping input and control as
+	// single-direction topics prevents the daemon from receiving its own events.
+	TopicSessionInput = "session.%s.input"
 
 	// TopicWildcard matches any topic.
 	TopicWildcard Topic = "*"

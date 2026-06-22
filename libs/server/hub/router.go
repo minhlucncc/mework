@@ -72,7 +72,7 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 	msgAckHandler := bus.NewAckHandler(msgBroker)
 
 	sessionMgr := session.NewManager(msgBroker, session.DefaultConfig())
-	sessionHandlers := session.NewHandlers(sessionMgr, agentHandlers)
+	sessionHandlers := session.NewHandlers(sessionMgr, agentHandlers, msgBroker)
 
 	autoProvisioner := channel.NewAutoProvisioner(registrySvc, channelReg, sessionMgr, agentHandlers, msgBroker, registry.DefaultTenantID)
 	channelRouter := channel.NewRouter(channelReg, msgBroker, autoProvisioner, channelFeature)
@@ -146,15 +146,21 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		r.Get("/sessions", sessionHandlers.ListSessions)
 		r.Get("/sessions/{id}", sessionHandlers.GetSession)
 		r.Delete("/sessions/{id}", sessionHandlers.CloseSession)
+
+		// Session chat bus (c0032, PAT/human): submit a turn and stream events.
+		r.Post("/sessions/{id}/messages", sessionHandlers.SendMessage)
+		r.Get("/sessions/{id}/stream", sessionHandlers.StreamSession)
 	})
 
 	r.Post("/api/v1/runners/enroll", registryHandlers.EnrollRunner)
 
-	// Runner session result sink (c0031): the daemon POSTs a terminal result
-	// here. Runtime-authed (rt_ Bearer), same authenticator as jobs/subscribe.
+	// Runner session endpoints (runtime-auth, rt_ Bearer): the daemon POSTs a
+	// terminal result here (c0031) and republishes outgoing ChatEvents (c0032)
+	// onto the session control topic for the hub to relay.
 	r.Route("/api/v1/runners/sessions", func(r chi.Router) {
 		r.Use(runtimeAuth.Middleware)
 		r.Post("/{id}/result", sessionHandlers.ResultSession)
+		r.Post("/{id}/events", sessionHandlers.ReceiveEvents)
 	})
 
 	r.Route("/api/v1/agents", func(r chi.Router) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"mework/libs/server/auth"
+	"mework/libs/server/bus"
 	"mework/libs/shared/core"
 	"mework/libs/shared/grant"
 )
@@ -22,13 +23,22 @@ type Dispatcher interface {
 type Handlers struct {
 	manager  *Manager
 	dispatch Dispatcher
+	broker   bus.Broker
+	sse      *bus.SSEHandler
 }
 
-// NewHandlers creates a new Handlers backed by the given Manager and dispatcher.
-// Session-create dispatches an open-session message to the request's runner via
-// the dispatcher.
-func NewHandlers(manager *Manager, dispatch Dispatcher) *Handlers {
-	return &Handlers{manager: manager, dispatch: dispatch}
+// NewHandlers creates a new Handlers backed by the given Manager, dispatcher, and
+// message broker. Session-create dispatches an open-session message to the
+// request's runner via the dispatcher (c0031); the broker publishes chat turns to
+// the session input topic and relays outgoing events from the session control
+// topic (c0032).
+func NewHandlers(manager *Manager, dispatch Dispatcher, broker bus.Broker) *Handlers {
+	return &Handlers{
+		manager:  manager,
+		dispatch: dispatch,
+		broker:   broker,
+		sse:      bus.NewSSEHandler(broker),
+	}
 }
 
 // --- request / response types ------------------------------------------------
@@ -186,6 +196,116 @@ func (h *Handlers) CloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SendMessage handles POST /api/v1/sessions/{id}/messages. It decodes a
+// ChatMessage, verifies the caller owns the session, and publishes the turn to
+// session.<id>.input for the running sandbox to consume. The server records
+// nothing — it is a thin relay — and returns 202 Accepted on success.
+func (h *Handlers) SendMessage(w http.ResponseWriter, r *http.Request) {
+	id := core.SessionID(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	var msg ChatMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !h.ownsSession(r, id) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		http.Error(w, "encode message", http.StatusInternalServerError)
+		return
+	}
+
+	topic := bus.FormatTopic(bus.TopicSessionInput, string(id))
+	if err := h.broker.Publish(r.Context(), topic, bus.Message{Payload: payload}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// StreamSession handles GET /api/v1/sessions/{id}/stream. It verifies ownership
+// then relays the session control topic (session.<id>.control) to the caller as
+// Server-Sent Events, reusing bus.SSEHandler for heartbeat, resume, and bounded
+// backpressure.
+func (h *Handlers) StreamSession(w http.ResponseWriter, r *http.Request) {
+	id := core.SessionID(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	if !h.ownsSession(r, id) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Target the session control topic by injecting it into the request the
+	// SSE handler reads its "topics" query parameter from.
+	controlTopic := string(bus.FormatTopic(bus.TopicSessionControl, string(id)))
+	q := r.URL.Query()
+	q.Set("topics", controlTopic)
+	r2 := r.Clone(r.Context())
+	r2.URL.RawQuery = q.Encode()
+
+	h.sse.Subscribe(w, r2)
+}
+
+// ReceiveEvents handles POST /api/v1/runners/sessions/{id}/events. It is the
+// runtime-authed ingress for the daemon, which has no in-process server broker:
+// it republishes a raw ChatEvent JSON body to session.<id>.control so the hub's
+// stream relays it. Returns 202 Accepted on success.
+func (h *Handlers) ReceiveEvents(w http.ResponseWriter, r *http.Request) {
+	id := core.SessionID(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	var ev ChatEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		http.Error(w, "encode event", http.StatusInternalServerError)
+		return
+	}
+
+	topic := bus.FormatTopic(bus.TopicSessionControl, string(id))
+	if err := h.broker.Publish(r.Context(), topic, bus.Message{Payload: payload}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// ownsSession reports whether the authenticated caller owns the given session.
+// A session that cannot be resolved is treated as not owned.
+func (h *Handlers) ownsSession(r *http.Request, id core.SessionID) bool {
+	info, err := h.manager.Get(r.Context(), id)
+	if err != nil {
+		return false
+	}
+	caller, ok := auth.GetAccountID(r.Context())
+	if !ok || caller == "" {
+		return false
+	}
+	return info.Owner == core.AccountID(caller)
 }
 
 // --- helpers ----------------------------------------------------------------

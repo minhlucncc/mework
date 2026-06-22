@@ -406,3 +406,75 @@ func TestChannelsEndpoint_TenantIsolation(t *testing.T) {
 		}
 	})
 }
+
+// TestSessionChatRoutes_Mounted verifies that the c0032 session chat bus routes
+// are mounted under the correct auth blocks: the PAT-protected send/stream
+// endpoints and the runtime-authed runner events ingress all reject
+// unauthenticated requests with 401 (mounted + auth enforced) rather than 404
+// (not mounted). Delta-spec scenarios: "Submit a chat turn", "Stream session
+// events", "Runner delivers events for relay".
+func TestSessionChatRoutes_Mounted(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping session chat routes test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	if err := store.RunMigrations(dsn); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	defer func() { _ = store.RollbackMigrations(dsn) }()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to test db: %v", err)
+	}
+	defer pool.Close()
+
+	mockMello := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer mockMello.Close()
+
+	cfg := &Config{
+		DatabaseURL:     dsn,
+		ListenAddr:      "127.0.0.1:0",
+		WebhookSecret:   "test-webhook-secret",
+		ServerKey:       "test-server-key",
+		MeworkSecretKey: "test-secret-key",
+		MelloBaseURL:    mockMello.URL,
+	}
+	srv := NewServer(pool, cfg)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"send turn requires PAT", http.MethodPost, "/api/v1/sessions/s1/messages"},
+		{"stream requires PAT", http.MethodGet, "/api/v1/sessions/s1/stream"},
+		{"runner events ingress requires runtime token", http.MethodPost, "/api/v1/runners/sessions/s1/events"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest(tt.method, httpSrv.URL+tt.path, nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusNotFound {
+				t.Fatalf("%s %s returned 404: route not mounted", tt.method, tt.path)
+			}
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("%s %s status = %d, want 401 (mounted + auth enforced)", tt.method, tt.path, resp.StatusCode)
+			}
+		})
+	}
+}
