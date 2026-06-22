@@ -1,22 +1,23 @@
 # API Reference
 
-> Audience: developers integrating with or extending `mework-server`. Covers HTTP
-> endpoints, authentication per route, the data model, and the planned SSE bus +
-> catalog API. Status badges: **`[Implemented]`** exists today; **`[Planned — cNNNN]`**
-> is specified under `openspec/changes/`.
+> Audience: developers integrating with or extending the mework hub. Covers HTTP
+> endpoints, authentication per route, the SSE bus + catalog + session API, and the data
+> model. Status badges: **`[Implemented]`** exists today; **`[Planned]`** is specified but
+> not yet built.
 >
-> Source of truth: `internal/server/router.go` (routes), `internal/store/migrations/`
-> (schema), `internal/server/webhook/parse.go` (trigger grammar).
+> Source of truth: `libs/server/hub/router.go` (routes), `libs/server/platform/store/migrations/`
+> (schema), `libs/server/webhook/parse.go` (trigger grammar).
 
 ## Authentication schemes
 
 | Scheme | Credential | Guards | Mechanism |
 |--------|-----------|--------|-----------|
-| **open** | none | `/healthz` | — |
+| **open** | none | `/healthz`, `/livez`, `/readyz`, `/webhooks/{provider}` | — (webhooks are signature-verified inside the handler) |
 | **signature** | per-connection webhook secret | `/webhooks/{provider}` | HMAC-SHA256 verified inside the handler |
-| **rt_token** `[Implemented]` | runtime bearer token (`mework_rt_…`) | `/api/v1/jobs/*` | HMAC-SHA256 lookup hash keyed by `SERVER_KEY` |
-| **PAT** `[Implemented]` | Mello personal access token | `/api/v1` management routes | bearer → Mello `/me`, cached 60s |
-| **runner identity** `[Planned — c0004]` | durable runner credential | SSE subscribe / ack / pull | obtained by exchanging a registration token at enroll |
+| **rt_token (runner identity)** `[Implemented]` | runtime bearer token (`mework_rt_…`), obtained via `runner enroll` | `/api/v1/jobs/*`, `/api/v1/runners/sessions/{id}/*`, agent pull | HMAC-SHA256 lookup hash keyed by `SERVER_KEY` |
+| **PAT** `[Implemented]` | Mello personal access token | `/api/v1` management + session routes | bearer → Mello `/me`, cached 60s |
+| **registration token** `[Implemented]` | one-time, short-lived token | `POST /api/v1/runners/enroll` | issued by `POST /api/v1/runners/registration-tokens` (PAT) |
+| **grant** `[Implemented]` | signed, scoped capability | agent pull (`OpPullAgent`), spawn (`OpSpawn`) | verified by `GrantMiddleware` keyed by `SERVER_KEY` |
 
 See [auth-and-secrets.md](auth-and-secrets.md) for token formats, hashing, and the
 grant model.
@@ -29,16 +30,32 @@ Global middleware (chi): `RequestID`, `RealIP`, `Logger`, `Recoverer`.
 
 | Method | Path | Auth | Handler / behavior |
 |--------|------|------|--------------------|
-| GET | `/healthz` | open | DB ping → `200 {"status":"ok"}` or `503` |
+| GET | `/healthz` | open | DB ping → `200 {"status":"ok"}` or `503 {"status":"not ready"}` (no error leak) |
+| GET | `/livez` | open | Process liveness, **DB-independent** → always `200` |
+| GET | `/readyz` | open | Readiness (DB ping) → `200`/`503`, generic body |
 | POST | `/webhooks/{provider}` | signature | Verify, parse trigger, enqueue. `202` on enqueue; `200` on any silent-ignore path (so the provider stops retrying); `401` only on missing/failed signature |
 
-### Job routes (rt_token)
+The server also caps request bodies (`RequestSize`, 4 MiB) and sets `ReadHeaderTimeout`/
+`IdleTimeout` (SSE-safe — no `WriteTimeout`).
+
+### Runtime routes (rt_token / runner identity)
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| POST | `/api/v1/jobs/claim` | Claim the oldest `queued` job for this runtime. `FOR UPDATE SKIP LOCKED` under a per-runtime advisory lock; sets `status=claimed`, `claim_lease_until=NOW()+30s`, `attempts++`. `204 No Content` when nothing to claim |
-| POST | `/api/v1/jobs/{id}/ack` | Ownership-checked (`403` if not owner). Status `running\|done\|failed` via the state machine (`409` on invalid transition). On `done`/`failed`: sets `writeback_status=pending` and fires async REST write-back. `204` |
+| POST | `/api/v1/jobs/claim` | Claim the oldest `queued` job for this runtime (legacy poll path). `FOR UPDATE SKIP LOCKED`; sets `status=claimed`, `claim_lease_until=NOW()+30s`, `attempts++`. `204` when nothing to claim |
+| POST | `/api/v1/jobs/{id}/ack` | Ownership-checked (`403` if not owner). Status `running\|done\|failed` via the state machine (`409` on invalid transition). On `done`/`failed`: `writeback_status=pending` + async REST write-back. `204` |
 | POST | `/api/v1/jobs/{id}/heartbeat` | Extends `claim_lease_until=NOW()+90s`. `204` |
+| GET | `/api/v1/jobs/subscribe` | SSE (`text/event-stream`): subscribe to topics (e.g. `runner.<id>.dispatch`); honors `Last-Event-ID` for resume; monotonic ids + heartbeats |
+| POST | `/api/v1/jobs/messages/{msgID}/ack` | Acknowledge a delivered bus message (SSE is server→client; ack is out-of-band) |
+| POST | `/api/v1/runners/sessions/{id}/result` | Daemon posts a terminal session result (status/summary/error) |
+| POST | `/api/v1/runners/sessions/{id}/events` | Daemon republishes a `ChatEvent`; the hub relays it on `session.<id>.control` |
+| GET | `/api/v1/agents/{name}/versions/{version}/pull` | Authorized agent pull (runtime + **grant**, `OpPullAgent`); returns artifact-or-reference + `form` |
+
+### Enrollment
+
+| Method | Path | Auth | Behavior |
+|--------|------|------|----------|
+| POST | `/api/v1/runners/enroll` | registration token | Exchange a one-time token for a durable runner identity (`runner_id` + secret) |
 
 ### Management routes (PAT)
 
@@ -56,41 +73,42 @@ Global middleware (chi): `RequestID`, `RealIP`, `Logger`, `Recoverer`.
 | GET | `/api/v1/profiles/{name}` | `profile.GetProfile` |
 | PUT | `/api/v1/profiles/{name}` | `profile.UpdateProfile` |
 | DELETE | `/api/v1/profiles/{name}` | `profile.DeleteProfile` |
+| POST | `/api/v1/agents/{name}/versions` | `catalog.PublishVersion` — publish an **immutable** version (rejects overwriting with different content) |
+| GET | `/api/v1/agents` | `catalog.ListAgents` |
+| GET | `/api/v1/agents/{name}` | `catalog.ResolveAgent` (`name@version`, missing version → `latest`) → definition metadata |
+| POST | `/api/v1/agents/{name}/dispatch` | `catalog.Dispatch` — resolve version, build grant, publish a dispatch (agent ref + grant) to the target runner topic; the runner pulls lazily |
+| POST | `/api/v1/runners/registration-tokens` | `registry.IssueRegistrationToken` — one-time enrollment token |
+| GET | `/api/v1/channels` | `channel.ListChannels` — active channel bindings (tenant-scoped) |
+| GET | `/api/v1/runs/{runID}/artifacts` | list run artifacts *(artifact store is a stub today)* |
+| GET | `/api/v1/runs/{runID}/artifacts/{name}` | download a run artifact *(stub)* |
 
-## HTTP/SSE endpoints — target `[Planned]`
-
-The redesign **removes the long-poll claim** and replaces it with SSE subscribe +
-out-of-band POST acks. It adds the catalog and dispatch routes.
-
-### Message bus `[Planned — c0002]`
-
-| Method | Path | Behavior |
-|--------|------|----------|
-| GET | `…/subscribe` | `Content-Type: text/event-stream`. Honors requested topics + the `Last-Event-ID` header for resume; emits SSE events with **monotonic ids** and periodic heartbeat comments. A subscriber may only subscribe to topics it is entitled to |
-| POST | `…/ack` | Acknowledge a delivered message by id (SSE is server→client only, so ack is out-of-band) |
-
-Broker interface (server-internal, pluggable backend — Postgres `LISTEN/NOTIFY`
-default, in-memory for tests, NATS/Redis swappable without changing the SSE contract):
-`Publish(topic, msg)` · `Subscribe(topics, fromEventID) → stream` · `Ack(msgID)`.
-Topics: `runner.<id>.dispatch`, `session.<id>.control`.
-
-### Agent catalog `[Planned — c0003]`
+### Interactive session routes (PAT) `[Implemented]`
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| POST | `/api/v1/agents/{name}/versions` | Publish an **immutable** version (rejects overwriting an existing version with different content) |
-| GET | `/api/v1/agents` | List agents |
-| GET | `/api/v1/agents/{name}` | Resolve an agent (including `@latest` / named channels → concrete version) |
-| GET | `/api/v1/agents/{name}/versions/{version}/pull` | Authorized pull (against puller identity + grant); returns artifact-or-reference + `form` |
-| POST | `/api/v1/agents/{name}/dispatch` | **Dispatch = publish**: resolves the version, builds the grant, and publishes a small dispatch message (agent ref + grant, referencing the exact version) to the target runner/session topic. Does not push artifact bytes — the runner pulls lazily |
+| POST | `/api/v1/sessions` | Create a session (`{agent_name, version?, runner, workspace?}`); owner/tenant from the PAT; dispatches an open-session message to the runner |
+| GET | `/api/v1/sessions` | List the caller's sessions (tenant-scoped) |
+| GET | `/api/v1/sessions/{id}` | Get a session |
+| DELETE | `/api/v1/sessions/{id}` | Close a session |
+| POST | `/api/v1/sessions/{id}/messages` | Submit a chat turn (`{role, content}`) → published to `session.<id>.input`; `202` |
+| GET | `/api/v1/sessions/{id}/stream` | SSE stream of `token`/`message`/`done`/`error` events from `session.<id>.control` |
 
-`form` is type-agnostic: `definition` (manifest: prompt + workflow + declared needs)
-or `image` (packaged/container image reference). Existing `profiles` map onto
-`definition`-form agents.
+### Message bus `[Implemented]`
+
+Broker interface (server-internal, pluggable backend — **in-memory** for tests, **postgres**
+for durability; NATS is a stub): `Publish(topic, msg)` · `Subscribe(topics, fromEventID) →
+stream` · `Ack(msgID)`. Topics:
+- `runner.<id>.dispatch` — hub → runner: one-shot + open-session dispatches.
+- `session.<id>.input` — hub → runner: chat turns + control (cancel/close).
+- `session.<id>.control` — runner → hub: per-turn `token`/`message`/`done`/`error` events.
+- `channel.<provider>.<resource>.<event>` — channel-routed webhook events *(experimental; off by default)*.
+
+`form` (catalog) is type-agnostic: `definition` (manifest: prompt + workflow + declared needs)
+or `image` (container reference). Existing `profiles` map onto `definition`-form agents.
 
 ## Trigger grammar `[Implemented]`
 
-Parsed in `internal/server/webhook/parse.go` from a ticket comment body:
+Parsed in `libs/server/webhook/parse.go` from a ticket comment body:
 
 ```
 @mework <profile> [workflow] <free instructions>
@@ -108,7 +126,7 @@ Recognized workflow keywords: **`plan`, `cook`, `test`, `review`, `ship`, `journ
 
 ## Webhook processing pipeline `[Implemented]`
 
-`POST /webhooks/{provider}` (`internal/server/webhook/handler.go`):
+`POST /webhooks/{provider}` (`libs/server/webhook/handler.go`):
 
 1. `ExtractContainerID` from the raw body → lookup `watched_containers` → `account_id`.
 2. Load `provider_connections.webhook_secret`.
@@ -124,7 +142,8 @@ Recognized workflow keywords: **`plan`, `cook`, `test`, `review`, `ship`, `journ
 
 ## Data model `[Implemented]`
 
-Single goose migration (`internal/store/migrations/000001_init.sql`). Entities are
+Embedded goose migrations (`libs/server/platform/store/migrations/`, `000001_init.sql` onward
+— tenancy, messages, agent catalog, channel routing, quotas, schedules, …). Entities are
 identified by `(provider_code, external_*_id)` so a new provider needs no migration.
 
 | Table | Key columns | Notes |
@@ -150,7 +169,7 @@ heartbeat/lease requirements.
 
 ## Job state machine `[Implemented]`
 
-Transactional with row locks (`internal/server/jobs/state.go`); terminal states
+Transactional with row locks (`libs/server/orchestrator/state.go`); terminal states
 immutable; same-status transition is a no-op.
 
 ```
@@ -174,7 +193,7 @@ The local side never holds provider credentials. See
 
 ## Client coverage
 
-`internal/meworkclient/` maps 1:1 onto the API: `Claim`/`Ack`/`Heartbeat` (rt_token);
+`libs/client/subscribe/` maps 1:1 onto the API: `Claim`/`Ack`/`Heartbeat`/`Subscribe` (rt_token);
 `CreateRuntime`/`ListRuntimes`/`DeleteRuntime`, `Create/Get/List/DeleteConnection`,
 `Create/Get/List/Update/DeleteProfile` (PAT). `CreateRuntimeResponse` carries the
 one-time `Token`.

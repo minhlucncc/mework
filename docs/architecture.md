@@ -1,39 +1,50 @@
 # Architecture — Agent Hub, Runners & Sandboxes
 
-> This is the canonical architecture document. It describes the **target**
-> architecture — the agent hub — as the product's intended shape, and maps every part
-> back to **what runs today**. Status badges throughout: **`[Implemented]`** ships in
-> the current code; **`[Planned — cNNNN]`** is specified under `openspec/changes/` and
-> not yet built.
+> This is the canonical architecture document. It describes the agent-hub architecture and
+> maps each part to **what runs today**. Status badges: **`[Implemented]`** ships in the
+> current code; **`[Planned]`** is specified but not yet built.
 >
-> **Bottom line on status:** everything in the "agent hub" sections is **planned**.
-> The code today implements the poll/queue pipeline described under
-> [Implementation today](#implementation-today). Only `c0006` (a parse fix) of the
-> redesign changes has shipped.
+> **Bottom line on status:** the agent hub is **substantially implemented** — the repo
+> restructure, install-once runner enrollment, SSE-pushed dispatch, the agent catalog +
+> grants, interactive sessions, and workspace-bound sandboxes (`local`/`docker` engines) all
+> ship. The **legacy poll/queue pipeline** (webhook → job → claim → write-back) also ships and
+> is the **default** webhook path. Remaining stubs: artifact store, NATS bus, GitHub/Jira
+> providers, the standalone `mework-sandbox` binary, and cloudflare/custom engines.
 
-## Two binaries
+## Binaries and modules
 
-Go module `mework` (Go 1.25.7), two binaries that share `internal/` packages:
+Go module `mework` (Go 1.26), a `go.work` workspace. Binaries live under `apps/`; shared code
+under `libs/{client,server,shared,sandbox,tests,tools}` (the `cmd/` + `internal/` layout was
+replaced by the restructure):
 
-- **`cmd/mework`** — the CLI **and** the local agent daemon/runner (client side).
-- **`cmd/mework-server`** — the central provider-gateway HTTP server (server side).
+- **`apps/mework`** — the CLI, the local agent daemon/runner, **and** `mework server start`
+  (run the hub in-process). Client-side packages: `libs/client/{cli,runner,enroll,subscribe,
+  catalog,workspacefs}`.
+- **`apps/mework-server`** — the standalone provider-gateway HTTP server. Server-side packages:
+  `libs/server/{hub,auth,middleware,registry,connection,catalog,session,bus,orchestrator,
+  webhook,writeback,channel,provider,platform,storage}`.
+- **`libs/sandbox`** — pluggable engines (`local`/`docker`/cloudflare/custom) + runtime
+  manager; `libs/sandbox/cmd/mework-sandbox` is a standalone runner *(stub today)*.
+- **`libs/shared`** — `core` types, `transport` wire contract, `config`, `grant`, `providers`.
 
 ## Why the redesign
 
-The current transport is **pull-based**: the daemon short-polls
-`POST /api/v1/jobs/claim` every ~5 seconds and the server can never initiate contact.
-That wastes requests, adds up to 5s of latency, and cannot support an "agent hub" that
-pushes work to subscribed clients. Agents also run **unsandboxed** today (a bare host
-subprocess), which is unsafe for running operator-dispatched agents.
+The original transport was **pull-based**: the daemon short-polled
+`POST /api/v1/jobs/claim` every ~5 seconds and the server could never initiate contact —
+wasteful, up to ~5s of latency, and unable to support an "agent hub" that pushes work to
+subscribed clients. (The legacy poll/claim path still ships as the default webhook pipeline;
+the SSE push transport below now coexists with it.) The redesign also moved execution into
+**pluggable sandboxes** (`local`/`docker`), so dispatched agents no longer run as a bare host
+subprocess.
 
 The redesign adopts the **DX of a GitHub Actions self-hosted runner**: install a
 runner once, then drive everything remotely from the hub — pull new agents on demand,
 run any *permitted* operation — without ever manually operating on the client machine
 again.
 
-## The three components (target)
+## The three components
 
-### 1. Server = Agent Hub  `[Planned — c0002/c0003]`
+### 1. Server = Agent Hub  `[Implemented]`
 The central, provider-agnostic brain:
 - **Registry & sessions** — runners enroll and hold long-lived sessions; the hub
   tracks presence over the SSE channel.
@@ -47,7 +58,7 @@ The central, provider-agnostic brain:
 - **Permission/policy engine** — issues scoped, least-privilege **grants** that travel
   with each dispatch.
 
-### 2. Daemon = Runner  `[Planned — c0004]`
+### 2. Daemon = Runner  `[Implemented]`
 The client on a local device, modeled on `actions/runner`:
 - **Enroll once** — exchange a hub URL + short-lived registration token for a durable
   runner identity; thereafter **unattended**.
@@ -58,7 +69,7 @@ The client on a local device, modeled on `actions/runner`:
 - **Enforce grants** — refuse operations outside the dispatched grant, locally.
 - **Manage local sandboxes** — own the lifecycle of the sandboxes on its device.
 
-### 3. Sandbox = isolated agent runtime  `[Planned — c0005]`
+### 3. Sandbox = isolated agent runtime  `[Implemented]` (local/docker; cloudflare/custom partial)
 - **Pluggable drivers** — `local` (host subprocess, current behavior, trusted use) and
   `docker` (a container per agent), extensible to other isolation backends.
 - **One agent per sandbox**, created for the run and destroyed after (cleanup
@@ -70,7 +81,7 @@ The client on a local device, modeled on `actions/runner`:
 See [runtime-and-sandbox.md](runtime-and-sandbox.md) for the runner loop and the
 sandbox `Driver` interface in detail.
 
-## Data flow (target)
+## Data flow
 
 ```
 provider ─webhook→ Server (Agent Hub)
@@ -91,7 +102,7 @@ provider ─webhook→ Server (Agent Hub)
                      • result ─POST→ hub ─REST writeback→ provider
 ```
 
-## Client contract: SSE only  `[Planned — c0002]`
+## Client contract: SSE only  `[Implemented]`
 
 Clients **subscribe only over Server-Sent Events** (`text/event-stream`). The server
 pushes events as work is published; each event has a monotonic id, so a reconnecting
@@ -105,11 +116,11 @@ topic. Delivery is **at-least-once with idempotent consumers** (each message car
 stable id for dedupe); unacked leased messages are redeliverable until ack or lease
 expiry; per-topic best-effort ordering, no global ordering.
 
-The single source of truth for this wire contract is the planned
-`internal/shared/transport` package (SSE event schema + API DTOs), depended on by both
-client and server — see [c0001 restructure](#roadmap).
+The single source of truth for this wire contract is the
+`libs/shared/transport` package (SSE event schema + API DTOs), depended on by both
+client and server.
 
-## Permission model: "any *permitted* operation"  `[Planned — c0003]`
+## Permission model: "any *permitted* operation"  `[Implemented]`
 
 Every dispatch carries a **scoped, least-privilege grant**. Three layers of defense so
 a buggy agent or a compromised message cannot exceed its scope:
@@ -124,20 +135,23 @@ No grant for an operation means that operation is denied. Grants are scoped **pe
 not per identity** — the same runner can be highly privileged for one dispatch and
 minimal for the next. See [auth-and-secrets.md](auth-and-secrets.md).
 
-## Today → Target migration
+## Legacy pipeline → agent hub (both ship)
 
-| Concern | Today `[Implemented]` | Target `[Planned]` | OpenSpec change |
+Both columns are **implemented today**: the legacy pipeline is the default webhook path, and
+the agent-hub mechanisms run alongside it. The table maps the evolution per concern.
+
+| Concern | Legacy pipeline | Agent hub | Status |
 |---|---|---|---|
-| Transport | 5s poll of `/jobs/claim` | SSE subscribe + topic publish | `c0002-message-bus` |
-| Server role | passive REST endpoint | publisher / broker / hub | `c0002-message-bus` |
-| Work routing | claim oldest queued row | publish to a runner/session topic | `c0002-message-bus` |
-| Agent definition | static `profiles` row | versioned, pullable catalog artifact | `c0003-agent-catalog` |
-| Distribution | none (profile snapshot in job) | pull agent on dispatch | `c0003-agent-catalog` |
-| Permissions | none (implicit trust) | scoped grant per dispatch | `c0003-agent-catalog` |
-| Client identity | pre-registered `runtime` + `rt_token` | install-once enrollment + runner identity | `c0005-agent-runner` |
-| Client loop | poll worker | enrolled SSE pull→run→report | `c0005-agent-runner` |
-| Execution | bare host subprocess | pluggable sandbox driver | `c0005-sandbox-runtime` |
-| Isolation | a `0700` directory | container / driver isolation + limits | `c0005-sandbox-runtime` |
+| Transport | 5s poll of `/jobs/claim` | SSE subscribe + topic publish | both ship |
+| Server role | passive REST endpoint | publisher / broker / hub | both ship |
+| Work routing | claim oldest queued row | publish to a runner/session topic | both ship |
+| Agent definition | static `profiles` row | versioned, pullable catalog artifact | both ship |
+| Distribution | none (profile snapshot in job) | pull agent on dispatch | both ship |
+| Permissions | none (implicit trust) | scoped grant per dispatch | both ship |
+| Client identity | pre-registered `runtime` + `rt_token` | install-once enrollment + runner identity | both ship |
+| Client loop | poll worker | enrolled SSE pull→run→report | both ship |
+| Execution | bare host subprocess | pluggable sandbox driver | both ship |
+| Isolation | a `0700` directory | container / driver isolation + limits | both ship |
 
 **Reused as-is (orthogonal to the redesign):** the provider-gateway adapter registry,
 the REST write-back outbox, webhook ingestion (becomes *publish* instead of
@@ -145,12 +159,13 @@ the REST write-back outbox, webhook ingestion (becomes *publish* instead of
 
 ## Roadmap
 
-The redesign lands as five OpenSpec changes, in dependency order:
+The redesign shipped as a sequence of OpenSpec changes (archived under
+`openspec/changes/archive/`), in dependency order:
 
 0. **`c0002-repo-restructure`** — **foundational, lands first.** A pure mechanical
    refactor (zero behavior change) into `shared` / `client` / `server` / `platform`
    domains with an enforced one-way dependency rule, per-component build/test, and a
-   single home (`internal/shared/transport`) for the client↔server wire contract — so
+   single home (`libs/shared/transport`) for the client↔server wire contract — so
    the features below can be built, tested, and released independently and in parallel.
 1. **`c0002-message-bus`** — SSE pub/sub transport (foundation). Replaces the long-poll
    claim with topic subscribe; reframes `jobs` as the durable backing store behind the
@@ -161,21 +176,20 @@ The redesign lands as five OpenSpec changes, in dependency order:
    local grant enforcement.
 4. **`c0005-sandbox-runtime`** — pluggable isolated execution drivers (`local`/`docker`).
 
-Status: **`c0001`–`c0005` are proposed, none implemented.** `c0006-normalize-workflow-keyword`
-(an unrelated parse-normalization hardening) is the only shipped redesign-era change.
-
-The `internal/` target layout after `c0001`:
+Status: **shipped.** The restructure, message bus, agent catalog + grants, runner enrollment,
+and sandbox runtime all landed (archived under `openspec/changes/archive/`). The realized
+layout (note: `libs/`, not `internal/`):
 
 ```
-internal/
-  shared/     core types · transport (wire contract) · config · providers/mello · errors · log
-  client/     cli · runner · subscribe (SSE) · sandbox (drivers)
-  server/     hub · registry · session · catalog · bus · orchestrator · permission
-              webhook · writeback · provider/mello · auth · middleware
-  platform/   store (Postgres) · secret (AES) · token (HMAC)
+libs/
+  shared/     core types · transport (wire contract) · config · grant · providers/mello
+  client/     cli · runner · subscribe (SSE) · catalog (resolvers) · enroll · workspacefs
+  server/     hub · registry · session · catalog · bus · orchestrator · channel
+              webhook · writeback · provider/mello · auth · middleware · platform · storage
+  sandbox/    engine/{local,docker,cloudflare,custom} · runtime · agent · cmd/mework-sandbox
 ```
 
-Dependency DAG: `shared` (leaf) ← `platform` ← `server`; `shared` ← `client`;
+Dependency DAG: `shared` (leaf) ← `server`; `shared`,`sandbox` ← `client`;
 **`client ⟂ server` (never import each other)**. Enforced in CI via an import-guard
 lint. Change directories are named `cNNNN-<slug>` to encode apply order; see
 [openspec-workflow.md](openspec-workflow.md).
@@ -210,22 +224,20 @@ server: durable outbox  ──▶  provider REST API (e.g. Mello CreateComment) 
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/mework/` | CLI + daemon entrypoint; cobra commands `cmd_*.go` (board, ticket, auth, provider, runtime, profile, daemon, version) |
-| `cmd/mework-server/` | Server entrypoint: load config → run migrations → start chi HTTP server with graceful shutdown |
-| `internal/cli/` | Config struct & persistence (`~/.mework/config.json`), flag/env/file resolution, profile paths |
-| `internal/mello/` | Mello REST API client + models |
-| `internal/meworkclient/` | HTTP client for `mework-server` (jobs claim/ack/heartbeat, connections, profiles, runtimes) |
-| `internal/daemon/` | Daemon lifecycle (pid/health), poll loop, prompt building & result formatting |
-| `internal/agentrun/` | Detects installed AI CLIs and executes them (prompt via stdin, isolated workdir) |
-| `internal/store/` | Postgres pgx pool + embedded goose migrations |
-| `internal/server/` | chi router, config, `/healthz` |
-| `internal/server/{auth,middleware}/` | PAT and runtime (`rt_token`) authenticator middleware |
-| `internal/server/{registry,connection,profile}/` | Runtimes / provider-connection / AI-profile CRUD |
-| `internal/server/webhook/` | `/webhooks/{provider}` handler, signature verify, `ParseTrigger`, enqueue |
-| `internal/server/jobs/` | Job lifecycle: enqueue, claim, ack, heartbeat, state machine, sweeper, write-back |
-| `internal/server/provider/` | Provider adapter interface + registry; `provider/mello/` is the first adapter |
-| `internal/server/{secret,token}/` | AES-256-GCM seal/unseal; runtime token generation + HMAC-SHA256 lookup hashing |
-| `internal/integration/` | End-to-end pipeline test |
+| `apps/mework/` | CLI + daemon entrypoint + `server start` (wires the in-process hub via `cli.SetServerStarter`) |
+| `apps/mework-server/` | Standalone server entrypoint: load config → migrate → chi server with graceful shutdown |
+| `libs/client/cli/` | cobra commands `cmd_*.go` (board, ticket, workspace, daemon, runner, runtime, agent, session, sandbox, server, profile, provider, auth, config, version) + config persistence (`~/.mework/`) |
+| `libs/client/runner/` | daemon lifecycle, SSE `Engine` (dispatch loop), one-shot + interactive `Session` execution |
+| `libs/client/{enroll,subscribe,catalog,workspacefs}/` | runner enrollment, SSE client, definition resolvers (HTTP/file), workspace artifact I/O |
+| `libs/shared/{core,transport,config,grant,providers/mello}/` | core types, wire contract, config, grants, Mello REST client |
+| `libs/server/hub/` | chi router, config (env), `/healthz` `/livez` `/readyz`, server assembly |
+| `libs/server/{auth,middleware}/` | PAT and runtime (`rt_token`) + grant authenticator middleware |
+| `libs/server/{registry,connection,catalog}/` | runtimes/enrollment, provider connections, agent catalog + profiles |
+| `libs/server/{session,bus,orchestrator,channel}/` | session manager, message broker (memory/postgres), job lifecycle, channel routing |
+| `libs/server/{webhook,writeback,provider}/` | webhook handler + `ParseTrigger`, REST write-back outbox, provider adapter registry (`provider/mello`) |
+| `libs/server/platform/{store,secret,token}/` | Postgres pool + goose migrations; AES-256-GCM seal/unseal; HMAC token hashing |
+| `libs/sandbox/` | engines (`local`/`docker`/cloudflare/custom), runtime manager, agent detection |
+| `libs/tests/{integration,e2e}/` | DB-backed integration tests; `e2e` BDD suite (behind the `e2e` build tag) |
 
 For endpoints, the wire schema, and the database tables, see
 [api-reference.md](api-reference.md). For the runner loop and execution model, see

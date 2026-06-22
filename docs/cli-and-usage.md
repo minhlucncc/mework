@@ -30,9 +30,12 @@ External Task System (e.g. Mello)
 
 You comment on a ticket; the server enqueues the work; your local daemon runs the AI
 CLI against your code; the server posts the result back to the ticket. Source code and
-provider credentials never leave your machine. (Target: the poll loop becomes an SSE
-subscription and `runtime register` becomes `runner enroll` — see
-[architecture.md](architecture.md).)
+provider credentials never leave your machine.
+
+This is the **legacy Mello pipeline** (poll/claim, the default webhook path). mework also
+ships the **interactive session/sandbox** flow — `runner enroll` (install-once) + the daemon
+subscribing over SSE, then `sandbox start` / `session create` to open a long-lived sandbox you
+chat with over the bus. Both coexist; see [architecture.md](architecture.md).
 
 ## Command tree `[Implemented]`
 
@@ -53,24 +56,38 @@ Root: `mework` (cobra). Persistent flags: `--server-url` (env `MELLO_BASE_URL`),
 | `comment` | `list <ticket-id>`, `add <ticket-id>` |
 | `search <query>` | full-text search |
 
-### Runtime / runner management (mework-server)
+### Runner / server management `[Implemented]`
 
 | Command | Subcommands | Auth |
 |---------|-------------|------|
+| `server` | `start [--listen]` — run the hub in-process (reads `DATABASE_URL`, `SERVER_KEY`, `MEWORK_SECRET_KEY`, …) | env |
+| `runner` | `enroll --url --token` — exchange a registration token for a durable runner identity (install-once) | registration token |
+| `daemon` | `start [--foreground]`, `stop`, `status`, `restart`, `logs [-f]` | runner identity |
+| `agent` | `list [--json]` — list catalog agents | PAT |
 | `provider` | `connect` (default `mello`; `--token`, `--webhook-secret`) | PAT |
-| `runtime` | `register --code [--label]`, `list`, `revoke --id` | PAT |
 | `profile` | `create`, `list`, `update`, `delete` (`--name`, `--body` file, `--backend`, `--harness`) | PAT |
-| `daemon` | `start [--foreground]`, `stop`, `status`, `restart`, `logs [-f]` | rt_token |
+| `runtime` *(legacy)* | `register --code [--label]`, `list`, `revoke --id` | PAT |
 | `version` | — | — |
 
-`config set` accepts only: `base_url`, `workspace_id`, `server_url`, `rt_token`,
-`daemon.trigger_keyword`, `daemon.done_column_id`. The PAT `token` is **not** settable
-via `config set` (use `login`).
+`runner enroll` is the **primary** enrollment path (install-once → unattended daemon);
+`runtime register` remains for backward compatibility. `config set` accepts only:
+`base_url`, `workspace_id`, `server_url`, `rt_token`, `daemon.trigger_keyword`,
+`daemon.done_column_id`. The PAT `token` is **not** settable via `config set` (use `login`).
 
-> **Target `[Planned — c0004]`:** the runner group gains `runner enroll` (install-once),
-> and read-only `agent list` / `session list` (inspect dispatched agents and active
-> sessions, `--json` supported). `runner enroll` replaces the poll-oriented
-> `runtime register`. See [auth-and-secrets.md](auth-and-secrets.md).
+### Sessions & sandboxes `[Implemented]`
+
+Drive a workspace as a server-addressable, chattable worker. `sandbox` is the
+workspace-oriented façade; `session` is the lower-level API.
+
+| Command | Subcommands | Auth |
+|---------|-------------|------|
+| `sandbox` | `start -w <dir> [--attach] [--json] [--idle <dur>]`, `list [--json]`, `stop <id>`, `send <id> <msg>` | PAT |
+| `session` | `list [--json]`, `create --agent <name> [--runner <id>] [--version <v>] [--json]`, `send <id> <msg>`, `attach <id> [--idle <dur>]`, `close <id>` | PAT |
+
+`sandbox start -w .` reads `<dir>/mework.yml`, targets the local enrolled runner, and creates
+a workspace-bound session — the daemon opens a long-lived sandbox bound to that directory.
+`sandbox send/stop/list` are aliases over `session send/close/list`. `attach` streams
+`token`/`message`/`done`/`error` events over SSE until a terminal event or the idle timeout.
 
 ## End-to-end setup
 
@@ -94,29 +111,26 @@ mework provider connect --provider mello --token mello_pat_xxx
 The server stores this token **sealed** with `MEWORK_SECRET_KEY` and uses it only for
 outbound API calls on your behalf. Omit `--token` to be prompted.
 
-### 4. Register a runtime  `[Implemented]`  *(target: `runner enroll`)*
-Each machine registers a unique runtime code and receives a one-time `rt_token`:
+### 4. Enroll this machine as a runner  `[Implemented]`
+Enrollment exchanges a one-time **registration token** for a durable runner identity,
+persisted to `~/.mework/identity.json` so the daemon runs unattended:
+```bash
+# Operator issues a registration token (PAT-authed):
+REG=$(curl -s -XPOST "$HUB/api/v1/runners/registration-tokens" \
+        -H "Authorization: Bearer <mello-pat>" | jq -r .token)
+# This machine enrolls:
+mework runner enroll --url "$HUB" --token "$REG"
+```
+
+<details><summary>Legacy: <code>runtime register</code> (backward-compat)</summary>
+
 ```bash
 mework runtime register --code macbook-claude --label "MacBook Pro · Claude"
-```
-Output:
-```
-Runtime registered successfully!
-ID:    <uuid>
-Code:  macbook-claude
-Token: mework_rt_xxx
-
-IMPORTANT: Save the Token. It will NOT be shown again.
-```
-Save it:
-```bash
-mework config set rt_token mework_rt_xxx
-```
-List or revoke:
-```bash
+mework config set rt_token mework_rt_xxx     # save the one-time token
 mework runtime list
 mework runtime revoke --id <uuid>
 ```
+</details>
 
 ### 5. Create an AI profile
 A profile is the server-side system prompt + backend hint + harness:
@@ -159,7 +173,7 @@ With the daemon running, comment on a Mello card:
 ### Examples
 Fix type errors with the default profile:
 ```
-@mework default fix the type errors in internal/server/health.go
+@mework default fix the type errors in libs/server/hub/health.go
 ```
 Build a component with a specialized profile and the `review` workflow:
 ```
@@ -177,6 +191,33 @@ Build a component with a specialized profile and the `review` workflow:
 5. It acks the result to the server.
 6. The server writes the result back onto the card via the provider REST API, through a
    durable outbox (exactly-once — no duplicate comments on restart).
+
+## Driving a workspace as a sandbox `[Implemented]`
+
+Instead of (or alongside) the ticket trigger, turn a workspace folder into a long-lived,
+chattable worker. The folder needs a `mework.yml` (engine + backend), e.g.:
+
+```yaml
+name: local-claude
+version: 1.0.0
+engine: local        # local | docker | cloudflare | custom
+backend: claude       # command[0]; the turn arrives on stdin
+```
+
+With the hub running and this machine enrolled + the daemon started:
+
+```bash
+SID=$(mework sandbox start -w . --json | jq -r .id)   # server → dispatch → daemon opens the sandbox
+mework sandbox list                                    # SID, agent, status
+mework session attach "$SID"        # terminal A: stream token/message/done events
+mework sandbox send  "$SID" "summarize this repo and list entry points"   # terminal B: a turn
+mework sandbox stop  "$SID"
+```
+
+The turn travels CLI → server (`session.<id>.input`) → daemon → the long-lived sandbox over
+**stdin (never argv)**; events stream back over `session.<id>.control`. See
+[runtime-and-sandbox.md](runtime-and-sandbox.md) and
+[examples/remote-claude/](../examples/remote-claude/) for a runnable walkthrough.
 
 ## Local vs server-side profiles
 

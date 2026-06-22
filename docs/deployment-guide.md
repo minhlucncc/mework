@@ -7,7 +7,7 @@
 ## 1. System requirements
 
 - **OS**: Linux (Ubuntu 22.04 LTS or newer recommended), macOS, or Windows.
-- **Go**: `1.25.7` or newer (to build from source).
+- **Go**: `1.26` or newer (to build from source).
 - **PostgreSQL**: `13` or newer.
 - **Docker & Docker Compose** (optional — for container deployment).
 
@@ -150,16 +150,23 @@ Start it:
 docker compose up -d
 ```
 
-## 6. Health check
+## 6. Health checks
 
-The server exposes `/healthz`. It returns `200 OK` when PostgreSQL is reachable, and
-`503 Service Unavailable` otherwise.
+The server exposes three probes (all open, JSON body):
+
+| Path | Meaning | Behavior |
+|------|---------|----------|
+| `GET /livez` | **liveness** | always `200` — process is up, **independent of the DB** (a DB blip won't flap liveness) |
+| `GET /readyz` | **readiness** | DB ping → `200 {"status":"ok"}` or `503 {"status":"not ready"}` (generic body; the DB error is logged, not leaked) |
+| `GET /healthz` | back-compat | same as `/readyz` |
 
 ```bash
-curl -i http://localhost:8080/healthz
+curl -i http://localhost:8080/livez     # liveness probe
+curl -i http://localhost:8080/readyz    # readiness probe (gates traffic)
 ```
 
-Successful response:
+Under an orchestrator, use `/livez` for the liveness probe and `/readyz` for the readiness
+probe. Successful response:
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json

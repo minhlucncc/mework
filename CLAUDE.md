@@ -18,12 +18,17 @@ description, actors, and use cases.
 
 ## Architecture at a glance
 
-Two binaries (Go module `mework`, Go 1.25.7):
+Go module `mework` (Go 1.26), a `go.work` workspace. Binaries under `apps/`, shared code
+under `libs/{client,server,shared,sandbox,tests,tools}`:
 
-- **`cmd/mework`** — the CLI **and** the local agent daemon.
-- **`cmd/mework-server`** — the central provider-gateway HTTP server.
+- **`apps/mework`** — the CLI, the local agent daemon, **and** `mework server start`
+  (run the hub in-process).
+- **`apps/mework-server`** — the standalone provider-gateway HTTP server.
+- **`libs/sandbox/cmd/mework-sandbox`** — standalone sandbox runner *(stub today)*.
 
-End-to-end flow:
+Two delivery flows coexist: the **legacy poll/queue pipeline** below (default webhook path),
+and the **interactive session/sandbox** flow (`runner enroll` → daemon SSE → `sandbox start` /
+`session create` → long-lived sandbox driven over the bus). End-to-end (legacy) flow:
 
 ```
 Mello (kanban)
@@ -45,33 +50,31 @@ server: durable outbox  ──▶  provider REST API (e.g. Mello CreateComment) 
 Two token types:
 - **PAT** (Mello personal access token) guards management routes (`/api/v1`
   runtimes, connections, profiles).
-- **`rt_token`** (runtime token) guards daemon job routes (`/api/v1/jobs/*`).
-- `/webhooks/{provider}` is signature-verified, not token-auth'd. `/healthz` is open.
+- **`rt_token`** (runtime token, via `runner enroll`) guards daemon routes
+  (`/api/v1/jobs/*`, `/api/v1/runners/sessions/*`, agent pull).
+- `/webhooks/{provider}` is signature-verified, not token-auth'd. `/healthz`, `/livez`,
+  `/readyz` are open.
 
 ## Repository layout
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/mework/` | CLI + daemon entrypoint; cobra commands `cmd_*.go` (board, ticket, auth, provider, runtime, profile, daemon, version) |
-| `cmd/mework-server/` | Server entrypoint: load config → run migrations → start chi HTTP server with graceful shutdown |
-| `internal/cli/` | Config struct & persistence (`~/.mework/config.json`), flag/env/file resolution, profile paths |
-| `internal/mello/` | Mello REST API client + models (workspaces, boards, tickets, comments, search) |
-| `internal/meworkclient/` | HTTP client for `mework-server` (jobs claim/ack/heartbeat, connections, profiles, runtimes) |
-| `internal/daemon/` | Daemon lifecycle (pid/health), poll loop, prompt building & result formatting |
-| `internal/agentrun/` | Detects installed AI CLIs and executes them (prompt via stdin, isolated workdir) |
-| `internal/store/` | Postgres pgx pool + embedded goose migrations (`migrations/*.sql`) |
-| `internal/server/` | chi router, config, `/healthz` |
-| `internal/server/auth/` | PAT authenticator middleware |
-| `internal/server/middleware/` | Runtime (`rt_token`) authenticator middleware |
-| `internal/server/registry/` | Runtimes CRUD |
-| `internal/server/connection/` | Provider connection CRUD (sealed credentials) |
-| `internal/server/profile/` | AI profile CRUD |
-| `internal/server/webhook/` | `/webhooks/{provider}` handler, signature verify, `ParseTrigger`, enqueue |
-| `internal/server/jobs/` | Job lifecycle: enqueue, claim, ack, heartbeat, state machine, sweeper, write-back |
-| `internal/server/provider/` | Provider adapter interface + registry; `provider/mello/` is the first adapter |
-| `internal/server/secret/` | AES-256-GCM seal/unseal for credentials |
-| `internal/server/token/` | Runtime token generation + HMAC-SHA256 lookup hashing |
-| `internal/integration/` | End-to-end pipeline test (`TestFullPipelineE2E`) |
+| `apps/mework/` | CLI + daemon entrypoint + `server start` (in-process hub via `cli.SetServerStarter`) |
+| `apps/mework-server/` | Standalone server entrypoint: load config → migrate → chi server with graceful shutdown |
+| `libs/client/cli/` | cobra commands `cmd_*.go` (board, ticket, workspace, daemon, runner, runtime, agent, session, sandbox, server, profile, provider, auth, config, version) + config persistence (`~/.mework/`) |
+| `libs/client/runner/` | daemon lifecycle (pid/health), SSE `Engine` (dispatch loop), one-shot + interactive `Session` execution |
+| `libs/client/{enroll,subscribe,catalog,workspacefs}/` | runner enrollment, SSE/HTTP client, definition resolvers (HTTP/file), workspace artifact I/O |
+| `libs/shared/{core,transport,config,grant}/` | core types, wire contract, config, grants |
+| `libs/shared/providers/mello/` | Mello REST API client + models |
+| `libs/server/hub/` | chi router, config, `/healthz` `/livez` `/readyz`, server assembly |
+| `libs/server/auth/` · `libs/server/middleware/` | PAT authenticator; runtime (`rt_token`) + grant middleware |
+| `libs/server/{registry,connection,catalog}/` | runtimes/enrollment, provider connections, agent catalog + AI profiles |
+| `libs/server/{session,bus,orchestrator,channel}/` | session manager, message broker (memory/postgres), job lifecycle, channel routing |
+| `libs/server/webhook/` | `/webhooks/{provider}` handler, signature verify, `ParseTrigger`, enqueue |
+| `libs/server/writeback/` · `libs/server/provider/` | REST write-back outbox; provider adapter registry (`provider/mello`; github/jira stubs) |
+| `libs/server/platform/{store,secret,token}/` | Postgres pool + goose migrations; AES-256-GCM seal/unseal; HMAC token hashing |
+| `libs/sandbox/` | engines (`local`/`docker`/cloudflare/custom), runtime manager, agent detection |
+| `libs/tests/{integration,e2e}/` | DB-backed integration tests; `e2e` BDD suite (behind the `e2e` build tag) |
 
 ## Build, test, run
 
@@ -111,11 +114,11 @@ Migrations run automatically on startup. See
 
 - **Prompts go to AI CLIs over stdin, never argv.** Ticket content is
   attacker-controllable; keeping it out of the command line avoids injection.
-  See `internal/agentrun/runner.go`.
+  See `libs/sandbox/engine/local/runner.go`.
 - **Job state machine is transactional with row locks; terminal states are
   immutable.** Allowed: `queued→claimed|failed`, `claimed→running|done|failed|queued`,
   `running→done|failed|queued`. Same-status transition is a no-op. See
-  `internal/server/jobs/state.go`.
+  `libs/server/orchestrator/state.go`.
 - **Webhook de-dup** relies on `UNIQUE(provider_code, external_event_id)`.
 - **One active job per runtime** (partial unique index); claims use
   `FOR UPDATE SKIP LOCKED`.
@@ -123,7 +126,7 @@ Migrations run automatically on startup. See
   daemon's own provider user.
 - **Provider-agnostic schema**: identify external entities by
   `(provider_code, external_*_id)` — adding a provider must not require a
-  migration. Add a new adapter under `internal/server/provider/<name>/`.
+  migration. Add a new adapter under `libs/server/provider/<name>/`.
 - **Credentials**: sealed with AES-256-GCM at rest, unsealed only server-side at
   write-back time. The daemon never holds provider credentials.
 - **File perms**: `0600` for credential/config files, `0700` for dirs.
@@ -199,22 +202,25 @@ green. Every shipped change leaves evidence in **`openspec/changes/<name>/eviden
 is the meta-router. See [docs/engineering-skills.md](docs/engineering-skills.md) for the
 full map and the skills (12 vendored + the repo-authored `spec-review-and-quality`).
 
-### Planned redesign (in proposal — not built yet)
+### Agent-hub redesign (shipped)
 
-A major redesign is proposed (not implemented): move from the current pull/poll
-model to an **agent hub** with a GitHub-Actions-runner DX — install a runner once,
-then **subscribe over SSE**, **pull** versioned agents from a catalog, run them in
-**pluggable sandboxes** (`local`/`docker`/…), all under scoped permission grants.
-It is captured as five OpenSpec changes under `openspec/changes/`
-(`c0002-repo-restructure` … `c0005-sandbox-runtime`) and described in
-[docs/architecture.md](docs/architecture.md). **The code still
-implements the current poll/queue model** — do not assume the redesign exists when
-working in the repo.
+The **agent hub** redesign has largely **shipped**: the repo restructure
+(`apps/`+`libs/`), install-once **`runner enroll`**, the daemon **subscribing over SSE**
+(`runner.<id>.dispatch`), the versioned **agent catalog** + grant model, **interactive
+sessions** and **workspace-bound sandboxes** in **pluggable engines** (`local`/`docker`).
+The **legacy poll/queue pipeline** also still ships and is the **default** webhook path
+(channel routing is off by default). Both coexist — see
+[docs/architecture.md](docs/architecture.md).
+
+Still stub / not production (treat as unbuilt): the artifact store (dummy), the NATS bus
+backend, GitHub/Jira provider adapters, the standalone `mework-sandbox` binary, and the
+cloudflare/custom engines. Shipped OpenSpec changes are archived under
+`openspec/changes/archive/`.
 
 ## Gotchas
 
 - **Trigger grammar is `@mework [profile] [workflow] [instructions]`** (see
-  `internal/server/webhook/parse.go`), where workflow ∈
+  `libs/server/webhook/parse.go`), where workflow ∈
   `plan|cook|test|review|ship|journal`. The older `/run` keyword is the legacy
   local-daemon `trigger_keyword` (config default) and is **not** what the current
   webhook pipeline matches.

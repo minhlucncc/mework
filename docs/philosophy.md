@@ -41,7 +41,7 @@ hopeful application logic.
 ### 6. Provider-agnostic to the core
 A new provider is an adapter, never a migration. Entities are identified by
 `(provider_code, external_*_id)`. Adding Jira or Linear means writing an adapter under
-`internal/server/provider/<name>/` — the schema does not change.
+`libs/server/provider/<name>/` — the schema does not change.
 
 ### 7. KISS / YAGNI / DRY
 Prefer the smallest design that satisfies the spec. Don't build for a future that
@@ -53,14 +53,14 @@ swappable later *if* a real need appears, behind an unchanged client contract.
 
 | Invariant | Why | Where |
 |-----------|-----|-------|
-| **Prompts go to AI CLIs over stdin, never argv** | Ticket/agent content is attacker-controllable; keeping it off the command line prevents shell/command injection | `internal/agentrun/runner.go` (target: `client/sandbox`) |
-| **Job state machine is transactional with row locks; terminal states are immutable** | Prevents lost updates and re-running finished work. Allowed: `queued→claimed\|failed`, `claimed→running\|done\|failed\|queued`, `running→done\|failed\|queued`; same-status is a no-op | `internal/server/jobs/state.go` |
-| **Webhook de-dup via `UNIQUE(provider_code, external_event_id)`** | A redelivered webhook must produce at most one job / one published message | `internal/store/migrations/` + webhook handler |
-| **One active job per runtime** (partial unique index) + `FOR UPDATE SKIP LOCKED` | Backstops concurrent claims; a runner runs one thing at a time | `internal/server/jobs/claim.go` |
+| **Prompts go to AI CLIs over stdin, never argv** | Ticket/agent content is attacker-controllable; keeping it off the command line prevents shell/command injection | `libs/sandbox/engine/local/runner.go` |
+| **Job state machine is transactional with row locks; terminal states are immutable** | Prevents lost updates and re-running finished work. Allowed: `queued→claimed\|failed`, `claimed→running\|done\|failed\|queued`, `running→done\|failed\|queued`; same-status is a no-op | `libs/server/orchestrator/state.go` |
+| **Webhook de-dup via `UNIQUE(provider_code, external_event_id)`** | A redelivered webhook must produce at most one job / one published message | `libs/server/platform/store/migrations/` + webhook handler |
+| **One active job per runtime** (partial unique index) + `FOR UPDATE SKIP LOCKED` | Backstops concurrent claims; a runner runs one thing at a time | `libs/server/orchestrator/claim.go` |
 | **Self-retrigger guard** | Never enqueue a job for a comment authored by the runner's own provider user — prevents infinite feedback loops | webhook handler |
-| **Credentials sealed with AES-256-GCM at rest; unsealed only server-side at write-back** | The local side must never be able to read provider credentials | `internal/server/secret/` |
-| **Runtime tokens stored only as an HMAC-SHA256 lookup hash** | A database leak must not yield usable tokens; plaintext is shown exactly once at creation | `internal/server/token/` |
-| **File perms `0600` for credential/config files, `0700` for dirs** | Defense against other local users reading tokens/config | `internal/cli/`, `internal/daemon/` |
+| **Credentials sealed with AES-256-GCM at rest; unsealed only server-side at write-back** | The local side must never be able to read provider credentials | `libs/server/platform/secret/` |
+| **Runtime tokens stored only as an HMAC-SHA256 lookup hash** | A database leak must not yield usable tokens; plaintext is shown exactly once at creation | `libs/server/platform/token/` |
+| **File perms `0600` for credential/config files, `0700` for dirs** | Defense against other local users reading tokens/config | `libs/client/cli/`, `libs/client/runner/` |
 | **(Target) grants are integrity-protected (signed/sealed) and least-privilege** | A runner must not be able to widen its own scope (grant-forgery defense) | `c0003-agent-catalog` |
 
 ## How these principles shape the redesign
