@@ -26,6 +26,21 @@ production-blocking flaws found in the assessment:
 - **Bounded async retry.** The retry/backoff runs in the background worker with a cap and
   respects shutdown; it never holds an inbound request.
 
+## Deploy-readiness (also in scope)
+
+This is the single "make the current system deploy-ready" change — fix the real bugs in the
+**current** features and make the database-backed test suite green for the **current**
+poll/queue model. No new features. Specifically, in addition to the channel fix:
+
+- **Make `make test` (with a database) green for current behavior.** The DB-backed integration
+  tests currently fail in three ways: (1) `TestChannelRouting_E2E` — the H4 bug fixed here;
+  (2) `TestFullPipelineE2E_BehaviorPreservation/self-retrigger` — current behavior, fix the
+  fixture/assertion so it passes; (3) `TestMessageBus_PublishSseAckNoRedelivery` — its
+  "claim route returns 404" and webhook→`runner.<id>.dispatch` push subtests assert a
+  **future** SSE-push model. The current, shipped model is poll/claim (per CLAUDE.md), so
+  these subtests are **aligned to current behavior** (the claim route stays; the push subtest
+  is skipped with a tracked reason) rather than migrating delivery. No delivery-model change.
+
 ## Capabilities
 
 ### New Capabilities
