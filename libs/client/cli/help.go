@@ -39,7 +39,8 @@ func registerCommands() {
 	runnerCmd.GroupID = groupRuntime
 	agentCmd.GroupID = groupRuntime
 	sessionCmd.GroupID = groupRuntime
-	rootCmd.AddCommand(runnerCmd, agentCmd, sessionCmd)
+	serverCmd.GroupID = groupRuntime
+	rootCmd.AddCommand(runnerCmd, agentCmd, sessionCmd, serverCmd)
 }
 
 var configCmd = &cobra.Command{
