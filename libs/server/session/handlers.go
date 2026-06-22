@@ -223,7 +223,13 @@ func (h *Handlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := json.Marshal(msg)
+	// Wrap the ChatMessage so the daemon's inputMessage decoder can parse it.
+	// The daemon expects {"message": {"role":"user","content":"..."}} rather than
+	// a bare ChatMessage.  See libs/client/runner/session_dispatch.go:inputMessage.
+	wrapper := struct {
+		Message ChatMessage `json:"message"`
+	}{Message: msg}
+	payload, err := json.Marshal(wrapper)
 	if err != nil {
 		http.Error(w, "encode message", http.StatusInternalServerError)
 		return

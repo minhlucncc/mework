@@ -10,7 +10,7 @@ package e2e
 // API end-to-end against the REAL local sandbox engine and the in-memory bus —
 // the same code path units 01–04 deliver. They mirror the multi-turn,
 // re-exec-with-carried-history pattern from
-// examples/remote-claude/remote_claude_test.go, but with a deterministic stub
+// examples/remote-claude/scripts/e2e.py, but with a deterministic stub
 // backend so the suite needs no installed Claude binary.
 //
 // Delta-spec scenarios covered (prebuilt-agent-sandbox/spec.md):

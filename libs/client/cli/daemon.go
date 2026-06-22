@@ -192,7 +192,14 @@ func runForeground(prof string) error {
 	})
 
 	engine := runner.NewEngine(runnerID, secret, cfg.ServerURL, cfg.ServerURL)
-	return engine.Start(ctx)
+	if err := engine.Start(ctx); err != nil {
+		return err
+	}
+	// Block until a signal (SIGINT/SIGTERM) or health /shutdown arrives.
+	// Engine.Start spawns goroutines and returns; without the block the
+	// process would exit immediately and kill them.
+	<-ctx.Done()
+	return nil
 }
 
 // tailLog prints the log file, optionally following appended lines.

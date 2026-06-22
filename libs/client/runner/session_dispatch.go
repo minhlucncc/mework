@@ -101,6 +101,7 @@ func processSessionDispatch(ctx context.Context, e *Engine, d transport.Dispatch
 		Broker:     eventsBroker,
 		Sessions:   mgr,
 		GrantKey:   []byte(opts.secret),
+		SessionID:  core.SessionID(d.Session),
 	}
 
 	if d.Workspace != "" {

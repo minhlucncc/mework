@@ -42,6 +42,14 @@ type SessionDeps struct {
 	// Workspace, when set, binds the session's sandbox to a working directory.
 	// The zero value leaves the run unbound (SandboxID-derived workdir).
 	Workspace core.Workspace
+
+	// SessionID, when non-empty, overrides the session id used for event
+	// publication.  The hub creates a session with its own id before dispatching
+	// to the runner; the daemon's local session.Manager.Create generates a
+	// different id, so the EventPublisher would otherwise publish to the wrong
+	// control topic.  Set this to the hub's session id so events reach the
+	// client that called session attach.
+	SessionID core.SessionID
 }
 
 // Session drives a long-lived sandbox for one interactive, multi-turn chat. The
@@ -106,13 +114,19 @@ func OpenSession(ctx context.Context, ref string, caller Caller, deps SessionDep
 		return nil, fmt.Errorf("start sandbox: %w", err)
 	}
 
+	// Use the caller-supplied session id for events so that the hub's
+	// session control topic matches what the attach client subscribed to.
+	eventSessionID := info.ID
+	if deps.SessionID != "" {
+		eventSessionID = deps.SessionID
+	}
 	return &Session{
 		info:    info,
 		deps:    deps,
 		mgr:     mgr,
 		backend: def.Backend,
 		sandbox: sb,
-		pub:     NewEventPublisher(deps.Broker, info.ID),
+		pub:     NewEventPublisher(deps.Broker, eventSessionID),
 	}, nil
 }
 

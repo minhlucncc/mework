@@ -8,6 +8,5 @@ use (
 	./libs/sandbox
 	./libs/tests
 	./libs/tools
-	./examples/remote-claude
 	./examples/mello-claude
 )

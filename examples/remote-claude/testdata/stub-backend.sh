@@ -18,4 +18,4 @@ set -eu
 
 task=$(cat)
 
-printf 'stub-backend ran; task=%s\n' "$task" > agent-output.txt
+printf 'stub-backend ran; task=%s\n' "$task" | tee agent-output.txt

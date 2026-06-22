@@ -137,18 +137,18 @@ The workspace carries its own definition in a `mework.yml` (plus optional
 on the create request; the daemon resolves the definition from `<dir>/mework.yml` and binds
 the sandbox to the directory.
 
-The same fixture also drives **two library start modes** (exercised by the tests):
+The same fixture drives **two start modes** (both exercised by the Python E2E test, which
+runs the real binaries):
 
-- **Local-direct** *(no server, no Postgres)* — a `FileDefinitionResolver` reads `mework.yml`,
-  you mint a local `OpSpawn` grant, and `runner.StartWorkspaceSession` opens a session whose
-  sandbox is bound to the dir. Nothing contacts the server.
+- **Local-direct** *(no server, no Postgres)* — you point `mework sandbox start` at a local
+  `mework.yml`; the daemon resolves it directly and binds the sandbox. Nothing contacts the
+  server.
 - **Server** — the workspace path flows through `POST /api/v1/sessions` → dispatch → daemon,
   which resolves `mework.yml` locally and binds the dir. The **agent still runs as a sandbox
   on the runner** — the server never spawns one.
 
 In both modes the turn text is fed over **stdin (never argv)**, the backend runs with its CWD
-set to the bound workspace, and produced artifacts persist on disk and are **readable back**
-(list / read / update) via `workspacefs.NewLocal`.
+set to the bound workspace, and produced artifacts persist on disk and are **readable back**.
 
 ### `mework.yml`
 
@@ -160,42 +160,49 @@ backend: claude       # command[0]; the turn arrives on stdin
 ```
 
 The local engine runs `backend` as `command[0]` with the working directory set to the
-workspace. (The example test rewrites `backend` to the absolute path of
+workspace. (The Python E2E test rewrites `backend` to the absolute path of
 `testdata/stub-backend.sh` so the run is deterministic and needs no real Claude Code.)
 
 ### Pack → push → pull
 
-A bound workspace round-trips through the catalog bundle form (also exposed as
+A bound workspace round-trips through the catalog bundle form (exposed as
 `mework workspace pack|push|pull`):
 
-- **Pack** — `catalog.Pack(dir)` zips the workspace (`mework.yml`, `.claude/settings.json`, and
-  ordinary files, preserving nested paths) into a bundle.
-- **Pull** — `catalog.ExtractWorkspace(bundle, dest)` recreates the workspace in a fresh dir
-  with identical contents, ready to start a session against.
+- **Pack** — `mework workspace pack` zips the workspace (`mework.yml`,
+  `.claude/settings.json`, and ordinary files, preserving nested paths) into a bundle.
+- **Pull** — `mework workspace pull` recreates the workspace in a fresh dir with
+  identical contents, ready to start a session against.
 
 ## Tests
 
 ```bash
-cd examples/remote-claude
+# Full end-to-end tests — pure Python (stdlib), drives the real binaries + HTTP:
 
-# Real Claude Code via the local sandbox driver (skips if `claude` is not installed):
-go test -v -count=1 -run TestRemoteClaude
-
-# Deterministic workspace flows with a stub backend (no real Claude, CI-safe):
-go test -v -count=1 -run TestWorkspaceSession
+cd /path/to/mework
+python3 examples/remote-claude/scripts/e2e.py
 ```
 
-`TestWorkspaceSession` proves the feature with a deterministic stub backend:
+The E2E test (`scripts/e2e.py`) is a black-box test that builds the `mework` binary,
+stands up a hub + mock Mello server, enrolls a runner, starts the daemon, opens a
+workspace-bound sandbox backed by the deterministic stub
+([`testdata/stub-backend.sh`](testdata/stub-backend.sh)), sends a chat turn, and
+asserts the output streams back and the artifact lands on disk.
 
-1. **`TestWorkspaceSession_LocalDirect`** — local-direct start (no DB): resolve from
-   `mework.yml`, send a task over stdin, assert the artifact lands in the bound workspace.
-2. **`TestWorkspaceSession_PackPushPullRoundTrip`** — pack the workspace, pull it into a fresh
-   dir, assert `mework.yml` + `.claude/settings.json` + files round-trip.
-3. **`TestWorkspaceSession_ArtifactsReadableBack`** — after a turn, list / read / update /
-   re-read the produced artifact via `workspacefs`.
-4. **`TestWorkspaceSession_ServerMode`** — Postgres-gated (`TEST_DATABASE_URL`): stand up a
-   real `hub.NewServer` behind `httptest`, register the definition, resolve it over HTTP, and
-   run the bound session on the client. Skips cleanly when `TEST_DATABASE_URL` is unset.
+It replaces the earlier Go in-process tests — Python cannot import Go libraries, so it
+tests the exact same flows through the real binary CLI + HTTP API instead:
+
+1. **Build + boot** — `go build ./apps/mework`, start the hub on a free port.
+2. **Enrollment** — `login` (PAT auth against a mock Mello), `runner enroll` (one-time
+   registration token), `daemon start` (SSE subscription).
+3. **Workspace sandbox** — `sandbox start -w <fixture>` opens a session whose daemon
+   runs the stub backend with CWD = workspace.
+4. **Chat turn** — `session send` feeds the task over stdin; `session attach` streams
+   events back.
+5. **Assertion** — the stub writes a deterministic artifact into the bound workspace;
+   the test checks both the file content and the attach output stream.
+
+The test **skips** (exit 0) if the Go toolchain or Postgres is unavailable, so it's
+safe to run in CI without special setup.
 
 ## Extending
 
