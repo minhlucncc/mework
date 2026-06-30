@@ -11,6 +11,11 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 ## [Unreleased]
 
 ### Added
+- Orchestrator MCP server (`mework-mcp`): stdio-based binary exposing sandbox lifecycle, notification, and session context tools via the Model Context Protocol (c0042-orchestrator-mcp).
+- Sandbox lifecycle MCP tools: `spawn_sandbox`, `get_sandbox_status`, `list_child_sandboxes`, `destroy_sandbox`, and `wait_for_sandbox` for orchestrating child sandboxes from within a session (c0042-orchestrator-mcp).
+- Notification MCP tools: `notify_human` (publish message to session output) and `ask_human` (publish question, block for response) for bidirectional human communication (c0042-orchestrator-mcp).
+- Session context MCP tools: `get_session_context` (session identity and workspace info) and `write_artifact` (persist content to session workspace) (c0042-orchestrator-mcp).
+- `GenerateSandboxSettings()` producing a `.claude/settings.json` template that injects `mework-mcp` and `gh` as configured MCP servers for orchestrator sandboxes (c0042-orchestrator-mcp).
 - Prebuilt agent-sandbox layer: named, versioned, immutable definitions binding an engine, agent backend, image/config, and resource limits into a ready-to-run combo, runnable by reference (`name@version`), with the `local` engine as default and one agent per sandbox (c0026-prebuilt-agent-sandbox).
 - Interactive multi-turn sessions over a long-lived sandbox with cancel/interrupt, idle reaping, ownership and tenant scoping, plus live `token|message|done|error` event streaming with tail-then-live for late subscribers and queryable session status/list (c0026-prebuilt-agent-sandbox).
 - Pre-baked image pinning for container engines so no install step runs at sandbox start-up; engines without images (e.g. `local`) ignore the field (c0026-prebuilt-agent-sandbox).
