@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -16,18 +17,35 @@ import (
 	"mework/libs/sandbox"
 )
 
+// MezonBot is the interface for a Mezon chat bot that can be embedded in the
+// offline server. It abstracts the bot lifecycle so that the runner package
+// (in the client module) does not depend on the concrete bot implementation
+// (in the server module).
+type MezonBot interface {
+	Authenticate() error
+	Start(ctx context.Context) error
+	SendMessage(ctx context.Context, channelID, text string) error
+	// OnMessage registers a handler that is called for every received message.
+	// The handler receives the channel ID, sender ID, and message text.
+	OnMessage(handler func(ctx context.Context, channelID, senderID, text string))
+}
+
 // OfflineServer listens on a Unix socket, accepts JSON-RPC messages, and
 // dispatches tasks to a workspace-bound session's sandbox over stdin (never
 // argv), preserving the injection-safety invariant.
+// When a MezonBot is configured, it is started in a background goroutine
+// after the socket listener is ready.
 type OfflineServer struct {
-	socketPath string
-	listener   net.Listener
-	session    *Session
-	done       chan struct{}
-	mu         sync.Mutex
-	closed     bool
-	policy     *policy.Policy
-	rateLimiter *policy.RateLimiter
+	socketPath   string
+	listener     net.Listener
+	session      *Session
+	done         chan struct{}
+	mu           sync.Mutex
+	closed       bool
+	policy       *policy.Policy
+	rateLimiter  *policy.RateLimiter
+	mezonBot     MezonBot
+	mezonStarted bool
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +77,13 @@ func SocketPath(workspaceDir string) (string, error) {
 func (s *OfflineServer) SetPolicy(p *policy.Policy) {
 	s.policy = p
 	s.rateLimiter = policy.NewRateLimiter()
+}
+
+// SetMezonBot attaches a Mezon bot to the server. The bot is started in a
+// background goroutine when Start() is called. SetMezonBot must be called
+// before Start().
+func (s *OfflineServer) SetMezonBot(bot MezonBot) {
+	s.mezonBot = bot
 }
 
 func NewOfflineServer(workspaceDir string, session *Session) (*OfflineServer, error) {
@@ -95,6 +120,12 @@ func (s *OfflineServer) Start(ctx context.Context) error {
 
 	// Start the accept loop in the background.
 	go s.acceptLoop(ctx)
+
+	// If a Mezon bot is configured, start it in its own goroutine.
+	if s.mezonBot != nil {
+		s.mezonStarted = true
+		go s.runMezonBot(ctx)
+	}
 
 	// Block until the context is cancelled (graceful shutdown).
 	<-ctx.Done()
@@ -249,6 +280,83 @@ func sendJSONRPCError(conn net.Conn, id interface{}, code int, message string) {
 		Error:   map[string]interface{}{"code": code, "message": message},
 		ID:      id,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Mezon bot lifecycle
+// ---------------------------------------------------------------------------
+
+// runMezonBot authenticates the bot, registers a message handler that
+// enforces policy, dispatches to the sandbox, and replies. It then blocks
+// on Start until the context is cancelled. Errors are logged but do not
+// prevent the offline server from operating (the Unix socket accepts
+// connections regardless).
+func (s *OfflineServer) runMezonBot(ctx context.Context) {
+	if err := s.mezonBot.Authenticate(); err != nil {
+		log.Printf("Mezon bot unavailable: %v", err)
+		return
+	}
+
+	// Register the message handler bridging Mezon messages → policy → sandbox → reply.
+	s.mezonBot.OnMessage(func(ctx context.Context, channelID, senderID, text string) {
+		// ---- POLICY ENFORCEMENT ----
+		if s.policy != nil {
+			sender := senderID
+			if sender == "" {
+				sender = "anonymous"
+			}
+			attrs := policy.Attributes{
+				"sender":         sender,
+				"authenticated":  "true",
+				"content":        text,
+				"content_length": fmt.Sprint(len(text)),
+				"time":           time.Now().UTC().Format(time.RFC3339),
+				"channel":        "mezon:" + channelID,
+			}
+			result, err := s.policy.Enforce(attrs)
+			if err != nil {
+				log.Printf("Mezon policy error: %v", err)
+				replyMsg := fmt.Sprintf("Policy error: %v", err)
+				_ = s.mezonBot.SendMessage(ctx, channelID, replyMsg)
+				return
+			}
+			if !result.Allowed {
+				_ = s.mezonBot.SendMessage(ctx, channelID, result.Reason)
+				return
+			}
+			// Rate limit check
+			if result.Reason != "" {
+				if count, ok := policy.ParseLimit(result.Reason); ok {
+					if !s.rateLimiter.Allow(sender, count) {
+						_ = s.mezonBot.SendMessage(ctx, channelID, "rate limit exceeded")
+						return
+					}
+				}
+			}
+		}
+		// ---- END POLICY ENFORCEMENT ----
+
+		// Dispatch to sandbox via stdin (injection safety invariant).
+		var out strings.Builder
+		_, execErr := s.session.sandbox.Exec(
+			ctx,
+			[]string{s.session.backend},
+			strings.NewReader(text),
+			&out, &out,
+		)
+		if execErr != nil {
+			log.Printf("Mezon sandbox exec error: %v", execErr)
+			_ = s.mezonBot.SendMessage(ctx, channelID, fmt.Sprintf("Error: %v", execErr))
+			return
+		}
+		// Send the sandbox output as the reply.
+		_ = s.mezonBot.SendMessage(ctx, channelID, out.String())
+	})
+
+	log.Printf("Mezon bot connected")
+	if err := s.mezonBot.Start(ctx); err != nil {
+		log.Printf("Mezon bot stopped: %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------

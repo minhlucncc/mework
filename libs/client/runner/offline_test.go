@@ -330,7 +330,7 @@ func TestOfflineAgentIpcRoundTrip(t *testing.T) {
 
 	// Send an instruction via the client.
 	const instruction = "list files in the workspace"
-	exitCode, err := SendInstruction(sockPath, instruction)
+	exitCode, err := SendInstruction(sockPath, instruction, "test")
 	if err != nil {
 		cancel()
 		<-srvDone
@@ -398,7 +398,7 @@ func TestOfflineAgentRejectsUnsupportedEngine(t *testing.T) {
 // error when no agent is listening on the socket.
 func TestOfflineClientAgentNotRunning(t *testing.T) {
 	// No socket exists at this path — the client should fail immediately.
-	_, err := SendInstruction("/tmp/nonexistent-offline-test-socket.sock", "hello")
+	_, err := SendInstruction("/tmp/nonexistent-offline-test-socket.sock", "hello", "test")
 	if err == nil {
 		t.Fatal("expected error when no agent is running, got nil")
 	}
@@ -444,7 +444,7 @@ func TestOfflineClientInstructionViaStdin(t *testing.T) {
 	}
 
 	const instruction = "list files in the workspace"
-	exitCode, err := SendInstruction(sockPath, instruction)
+	exitCode, err := SendInstruction(sockPath, instruction, "test")
 	if err != nil {
 		cancel()
 		<-srvDone

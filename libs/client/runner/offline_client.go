@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
 )
 
 // runRequest is the JSON-RPC 2.0 request body for the "run" method.
@@ -91,4 +94,39 @@ func CheckAgentRunning(socketPath string) bool {
 		return false
 	}
 	return info.Mode()&os.ModeSocket != 0
+}
+
+// meworkYMLConfig mirrors the workspace definition file used by the offline
+// agent. Only the Mezon subsection is extracted here.
+type meworkYMLConfig struct {
+	Mezon *struct {
+		AppID   string `yaml:"app_id"`
+		APIKey  string `yaml:"api_key"`
+		BaseURL string `yaml:"base_url,omitempty"`
+	} `yaml:"mezon,omitempty"`
+}
+
+// MezonConfigFromWorkspace reads the mework.yml in the given workspace
+// directory and extracts the Mezon bot credentials.  It returns the app ID,
+// API key, and optional base URL, along with a boolean indicating whether
+// Mezon credentials were found.
+// This function does NOT require a database connection and works purely
+// from the local filesystem, making it suitable for offline mode.
+func MezonConfigFromWorkspace(workspaceDir string) (appID, apiKey, baseURL string, ok bool) {
+	path := filepath.Join(workspaceDir, "mework.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", "", false
+	}
+
+	var cfg meworkYMLConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", "", "", false
+	}
+
+	if cfg.Mezon == nil || cfg.Mezon.AppID == "" || cfg.Mezon.APIKey == "" {
+		return "", "", "", false
+	}
+
+	return cfg.Mezon.AppID, cfg.Mezon.APIKey, cfg.Mezon.BaseURL, true
 }

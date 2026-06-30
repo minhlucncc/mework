@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"mework/libs/server/hub"
+	mezoncfg "mework/libs/shared/providers/mezon"
 	"mework/libs/server/platform/store"
+	mezonbot "mework/libs/server/provider/mezon/bot"
 
 	// Blank-import required drivers.
 	_ "mework/libs/server/bus/postgres"
@@ -56,6 +58,37 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// 4a. Start Mezon bot service when credentials are configured.
+	var mezonSvc *hub.MezonBotService
+	if cfg.MezonAppID != "" && cfg.MezonAPIKey != "" {
+		log.Println("Mezon credentials found, starting bot service...")
+
+		// TODO: Wire a real SDK client here once the mezon-go-sdk dependency
+		// is vendored into the server module. The nil SDK client produces a
+		// no-op bot that logs received messages but does not connect to Mezon
+		// or route messages through the channel router. The adapter is still
+		// registered so provider.Get("mezon") works for webhook/api paths.
+		bot := mezonbot.New(
+			mezoncfg.Config{
+				AppID:   cfg.MezonAppID,
+				APIKey:  cfg.MezonAPIKey,
+				BaseURL: cfg.MezonBaseURL,
+			},
+			nil, // SDK client — replace with real client for production use.
+			func(msg mezonbot.Message) {
+				log.Printf("Mezon message from %s in channel %s: %.100s", msg.SenderID, msg.ChannelID, msg.Text)
+			},
+		)
+		mezonSvc = hub.SetupMezon(bot)
+		mezonCtx, mezonCancel := context.WithCancel(context.Background())
+		mezonSvc.Start(mezonCtx)
+
+		// Cancel the Mezon context on shutdown.
+		defer mezonCancel()
+	} else {
+		log.Println("No Mezon credentials configured — skipping Mezon bot service")
+	}
+
 	// 5. Graceful shutdown handler
 	shutdownErr := make(chan error, 1)
 	go func() {
@@ -68,6 +101,12 @@ func main() {
 		// Allow 15 seconds for active connections to finish
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer shutdownCancel()
+
+		// Stop the Mezon bot service before HTTP to allow pending
+		// write-backs to complete.
+		if mezonSvc != nil {
+			_ = mezonSvc.Stop(shutdownCtx)
+		}
 
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			shutdownErr <- err

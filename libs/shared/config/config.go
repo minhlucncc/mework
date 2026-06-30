@@ -37,6 +37,8 @@ type Config struct {
 	ServerURL    string       `json:"server_url,omitempty"`
 	RuntimeToken string       `json:"rt_token,omitempty"`
 	Daemon       DaemonConfig `json:"daemon,omitempty"`
+	MezonAppID   string       `json:"mezon_app_id,omitempty"`
+	MezonAPIKey  string       `json:"mezon_api_key,omitempty"`
 }
 
 // LoadConfig reads the profile config from disk. A missing file yields a

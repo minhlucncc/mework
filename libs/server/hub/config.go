@@ -24,6 +24,13 @@ type Config struct {
 	MeworkSecretKey string
 	MelloBaseURL    string
 
+	// MezonAppID is the bot application ID for Mezon (optional).
+	MezonAppID   string
+	// MezonAPIKey is the bot API key for Mezon (optional).
+	MezonAPIKey  string
+	// MezonBaseURL is the optional base URL for a self-hosted Mezon instance.
+	MezonBaseURL string
+
 	// ChannelRoutingEnabled turns on the experimental per-resource channel
 	// auto-provisioning path. Disabled by default — a default deployment uses the
 	// legacy webhook → job → claim → write-back pipeline. Set via
@@ -74,6 +81,10 @@ func LoadConfig() (*Config, error) {
 	// Mello is an optional provider. When empty, the server starts without
 	// Mello integration — no Mello API calls, no Mello webhook verification.
 
+	mezonAppID := os.Getenv("MEZON_APP_ID")
+	mezonAPIKey := os.Getenv("MEZON_API_KEY")
+	mezonBaseURL := os.Getenv("MEZON_BASE_URL")
+
 	// Storage config from environment.
 	storageCfg := storage.Config{
 		Driver: storage.DriverName(os.Getenv("STORAGE_DRIVER")),
@@ -103,6 +114,9 @@ func LoadConfig() (*Config, error) {
 		ServerKey:             serverKey,
 		MeworkSecretKey:       meworkSecretKey,
 		MelloBaseURL:          melloBaseURL,
+		MezonAppID:            mezonAppID,
+		MezonAPIKey:           mezonAPIKey,
+		MezonBaseURL:          mezonBaseURL,
 		ChannelRoutingEnabled: channelRouting,
 		Storage:               storageCfg,
 	}, nil
