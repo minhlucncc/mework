@@ -23,10 +23,13 @@ func FlagOrEnv(cmd *cobra.Command, flagName, envName, fallback string) string {
 	return fallback
 }
 
-// ResolveBaseURL applies flag > env (MELLO_BASE_URL) > config > DefaultBaseURL.
+// ResolveBaseURL applies flag > env (MEWORK_SERVER_URL / MELLO_BASE_URL) > config > DefaultBaseURL.
 func ResolveBaseURL(cmd *cobra.Command, cfg *config.Config) string {
 	cfgVal := ""
 	if cfg != nil {
+		cfgVal = cfg.ServerURL
+	}
+	if cfgVal == "" {
 		cfgVal = cfg.BaseURL
 	}
 	if cfgVal == "" {
@@ -35,18 +38,23 @@ func ResolveBaseURL(cmd *cobra.Command, cfg *config.Config) string {
 	return FlagOrEnv(cmd, "server-url", "MELLO_BASE_URL", cfgVal)
 }
 
-// ResolveWorkspaceID applies flag > env (MELLO_WORKSPACE_ID) > config.
+// ResolveWorkspaceID applies flag > env (MEWORK_WORKSPACE_ID / MELLO_WORKSPACE_ID) > config.
 func ResolveWorkspaceID(cmd *cobra.Command, cfg *config.Config) string {
 	cfgVal := ""
 	if cfg != nil {
 		cfgVal = cfg.WorkspaceID
 	}
-	return FlagOrEnv(cmd, "workspace-id", "MELLO_WORKSPACE_ID", cfgVal)
+	return FlagOrEnv(cmd, "workspace-id", "MEWORK_WORKSPACE_ID", FlagOrEnv(cmd, "workspace-id", "MELLO_WORKSPACE_ID", cfgVal))
 }
 
-// ResolveToken applies env (MELLO_API_KEY) > config. No flag: tokens must not
-// be passed as flags (they leak into shell history / process listings).
+// ResolveToken applies env (MEWORK_API_KEY or MELLO_API_KEY) > config.
+// MEWORK_API_KEY is the provider-neutral alternative; MELLO_API_KEY is
+// retained for backward compatibility. No flag: tokens must not be passed
+// as flags (they leak into shell history / process listings).
 func ResolveToken(cfg *config.Config) string {
+	if v := os.Getenv("MEWORK_API_KEY"); v != "" {
+		return v
+	}
 	if v := os.Getenv("MELLO_API_KEY"); v != "" {
 		return v
 	}

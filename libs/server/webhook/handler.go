@@ -7,8 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,7 +15,6 @@ import (
 	"mework/libs/server/connection"
 	"mework/libs/server/orchestrator"
 	"mework/libs/server/provider"
-	"mework/libs/shared/providers/mello"
 )
 
 type channelRouter interface {
@@ -32,18 +29,16 @@ type Handler struct {
 	pool          *pgxpool.Pool
 	broker        bus.Broker
 	secretKey     string
-	melloBaseURL  string
 	connectionSvc *connection.Service
 	channelR      channelRouter
 	featureC      featureChecker
 }
 
-func NewHandler(pool *pgxpool.Pool, broker bus.Broker, secretKey string, melloBaseURL string, extra any) *Handler {
+func NewHandler(pool *pgxpool.Pool, broker bus.Broker, secretKey string, extra any) *Handler {
 	h := &Handler{
 		pool:          pool,
 		broker:        broker,
 		secretKey:     secretKey,
-		melloBaseURL:  melloBaseURL,
 		connectionSvc: connection.NewService(pool, secretKey),
 	}
 	if router, ok := extra.(channelRouter); ok {
@@ -111,13 +106,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Verify signature & timestamp (replay check)
-	var signature, timestamp, deliveryID string
-	if providerCode == "mello" {
-		signature = r.Header.Get("X-Mello-Signature")
-		timestamp = r.Header.Get("X-Mello-Timestamp")
-		deliveryID = r.Header.Get("X-Mello-Delivery-Id")
-	}
+		// 4. Verify signature & timestamp (replay check)
+		// Use the provider's declared header names so every provider specifies
+		// its own webhook signature scheme (X-Mello-Signature, X-Hub-Signature...).
+		headers := prov.WebhookHeaders()
+		signature := r.Header.Get(headers.Signature)
+		timestamp := r.Header.Get(headers.Timestamp)
+		deliveryID := r.Header.Get(headers.DeliveryID)
+
 
 	if signature == "" || timestamp == "" {
 		http.Error(w, "Unauthorized: missing signature or timestamp", http.StatusUnauthorized)
@@ -218,12 +214,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := mello.NewClient(h.melloBaseURL, provToken, 10*time.Second, "mework-server")
-	ticket, err := client.GetTicket(ev.ExternalTaskID)
-	if err != nil {
-		log.Printf("Failed to fetch ticket detail from Mello: %v", err)
-		w.WriteHeader(http.StatusOK)
-		return
+	// Use the provider adapter to fetch platform-specific task details.
+	// Each provider (Mello, GitHub, Jira) implements its own FetchTaskDetail.
+	var taskTitle, taskDesc string
+	taskDetail, fetchErr := prov.FetchTaskDetail(r.Context(), provToken, ev.ExternalTaskID)
+	if fetchErr == nil && taskDetail != nil {
+		taskTitle = taskDetail.Title
+		taskDesc = taskDetail.Description
+	} else if fetchErr != nil {
+		log.Printf("Failed to fetch task detail via provider %s: %v", providerCode, fetchErr)
 	}
 
 	// Parse custom workflow instructions if workflowName was parsed
@@ -235,8 +234,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"external_task_id":      ev.ExternalTaskID,
 		"provider_code":         providerCode,
 		"external_actor_id":     ev.Actor.ID,
-		"task_title":            ticket.Title,
-		"task_description":      ticket.Description,
+		"task_title":            taskTitle,
+		"task_description":      taskDesc,
 		"profile_body_snapshot": profileBodySnapshot,
 		"workflow":              workflowName,
 		"instructions":          finalInstructions,
@@ -263,8 +262,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				ExternalEventID:     deliveryID,
 				ProviderCode:        providerCode,
 				ExternalActorID:     ev.Actor.ID,
-				TaskTitle:           ticket.Title,
-				TaskDescription:     ticket.Description,
+				TaskTitle:           taskTitle,
+				TaskDescription:     taskDesc,
 				ProfileBodySnapshot: profileBodySnapshot,
 				Workflow:            workflowName,
 				Instructions:        finalInstructions,
@@ -293,8 +292,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ExternalEventID:     deliveryID,
 		ProviderCode:        providerCode,
 		ExternalActorID:     ev.Actor.ID,
-		TaskTitle:           ticket.Title,
-		TaskDescription:     ticket.Description,
+		TaskTitle:           taskTitle,
+		TaskDescription:     taskDesc,
 		ProfileBodySnapshot: profileBodySnapshot,
 		Workflow:            workflowName,
 		Instructions:        finalInstructions,

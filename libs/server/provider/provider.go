@@ -19,6 +19,20 @@ type CanonicalEvent struct {
 	Body                string `json:"body"`
 }
 
+// WebhookHeaderNames declares the HTTP header names a provider uses for
+// webhook signature verification, timestamp, and delivery-id fields.
+type WebhookHeaderNames struct {
+	Signature    string
+	Timestamp    string
+	DeliveryID   string
+}
+
+// TaskDetail holds the platform-specific title and description for a task.
+type TaskDetail struct {
+	Title       string
+	Description string
+}
+
 type Provider interface {
 	Code() string
 	ExtractContainerID(body []byte) (string, error)
@@ -26,6 +40,15 @@ type Provider interface {
 	ParseEvent(payload []byte) (*CanonicalEvent, error)
 	WriteBack(ctx context.Context, token string, taskID string, body string) error
 	ChannelKey(rawPayload []byte) (providerCode string, resourceID string)
+
+	// WebhookHeaders returns the header names this provider uses for webhook
+	// signature verification. The webhook handler calls this instead of
+	// hardcoding provider-specific header names.
+	WebhookHeaders() WebhookHeaderNames
+
+	// FetchTaskDetail retrieves the platform-specific task title and description
+	// for the given external task ID. Returns empty strings when unavailable.
+	FetchTaskDetail(ctx context.Context, token, taskID string) (*TaskDetail, error)
 }
 
 var (

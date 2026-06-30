@@ -111,12 +111,17 @@ func (h *AgentHandlers) DispatchSessionToRunner(ctx context.Context, agentName, 
 		return fmt.Errorf("agent name is required")
 	}
 
-	exists, err := h.agentExists(ctx, agentName)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return ErrNotFound
+	// Workspace-bound agents resolve from the workspace's mework.yml on the
+	// daemon side, so we skip the catalog existence check when a workspace path
+	// is provided. Catalog-registered agents always require an agent record.
+	if workspace == "" {
+		exists, err := h.agentExists(ctx, agentName)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
 	}
 
 	grantJSON, err := json.Marshal(g)

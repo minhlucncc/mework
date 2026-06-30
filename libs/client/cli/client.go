@@ -21,7 +21,7 @@ func newRESTClient(cmd *cobra.Command) (*mello.Client, *config.Config, error) {
 	}
 	token := ResolveToken(cfg)
 	if token == "" {
-		return nil, nil, fmt.Errorf("not authenticated — run `mello login --token <mello_pat_...>` or set MELLO_API_KEY")
+		return nil, nil, fmt.Errorf("not authenticated — run `mework runner enroll` or set MEWORK_API_KEY / MELLO_API_KEY")
 	}
 	baseURL := ResolveBaseURL(cmd, cfg)
 	return mello.NewClient(baseURL, token, 30*time.Second, version), cfg, nil
@@ -47,7 +47,7 @@ func newMeworkClient() (*subscribe.Client, *config.Config, error) {
 func requireWorkspaceID(cmd *cobra.Command, cfg *config.Config) (string, error) {
 	ws := ResolveWorkspaceID(cmd, cfg)
 	if ws == "" {
-		return "", fmt.Errorf("workspace id required — pass --workspace-id, set MELLO_WORKSPACE_ID, or `mello config set workspace_id <id>`")
+		return "", fmt.Errorf("workspace id required — pass --workspace-id or set MEWORK_WORKSPACE_ID / MELLO_WORKSPACE_ID")
 	}
 	return ws, nil
 }

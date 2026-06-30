@@ -3,16 +3,17 @@ package writeback
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mework/libs/shared/providers/mello"
 	"mework/libs/server/connection"
+	"mework/libs/server/provider"
 )
 
-// ExecuteWriteBack performs the server-side writeback to the provider.
-func ExecuteWriteBack(ctx context.Context, pool *pgxpool.Pool, secretKey, melloBaseURL, jobID string) error {
+// ExecuteWriteBack performs the server-side writeback to the provider using the
+// registered Provider adapter. Returns an error if no provider is registered for
+// the job's provider_code.
+func ExecuteWriteBack(ctx context.Context, pool *pgxpool.Pool, secretKey, jobID string) error {
 	// 1. Load job details and runtime code (as profile name)
 	var accountID, providerCode, externalTaskID, status, lastError, resultSummary string
 	var profileName, workflowName string
@@ -37,15 +38,14 @@ func ExecuteWriteBack(ctx context.Context, pool *pgxpool.Pool, secretKey, melloB
 	// 3. Format comment body
 	commentBody := formatComment(profileName, workflowName, status, resultSummary, lastError)
 
-	// 4. Call provider API (Mello REST API)
-	if providerCode == "mello" {
-		client := mello.NewClient(melloBaseURL, token, 30*time.Second, "mework-server")
-		_, err = client.CreateComment(externalTaskID, commentBody)
-		if err != nil {
-			return fmt.Errorf("provider REST API call failed: %w", err)
-		}
-	} else {
-		return fmt.Errorf("unsupported provider code: %s", providerCode)
+	// 4. Look up the registered provider adapter and call WriteBack.
+	// If no provider is registered (e.g. Mello not loaded), this returns an error.
+	prov, ok := provider.Get(providerCode)
+	if !ok {
+		return fmt.Errorf("no provider registered for code: %s (is the provider binary running?)", providerCode)
+	}
+	if err := prov.WriteBack(ctx, token, externalTaskID, commentBody); err != nil {
+		return fmt.Errorf("provider %s writeback failed: %w", providerCode, err)
 	}
 
 	return nil

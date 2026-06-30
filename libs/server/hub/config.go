@@ -71,9 +71,8 @@ func LoadConfig() (*Config, error) {
 	}
 
 	melloBaseURL := os.Getenv("MELLO_BASE_URL")
-	if melloBaseURL == "" {
-		melloBaseURL = "https://mello.mezon.vn/api/v1"
-	}
+	// Mello is an optional provider. When empty, the server starts without
+	// Mello integration — no Mello API calls, no Mello webhook verification.
 
 	// Storage config from environment.
 	storageCfg := storage.Config{

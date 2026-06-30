@@ -27,7 +27,7 @@ var debugFlag bool
 var rootCmd = &cobra.Command{
 	Use:           "mework",
 	Short:         "Mework CLI — kanban management + local agent runtime",
-	Long:          "Work with Mello from the command line: manage boards/tickets and run the agent daemon that executes triggered tickets locally.",
+	Long:          "Mework CLI — run the local agent daemon, manage sessions, send messages to agents, and interface with kanban boards.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -37,8 +37,8 @@ func init() {
 		version, commit, date, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	rootCmd.SetVersionTemplate("mework {{.Version}}\n")
 
-	rootCmd.PersistentFlags().String("server-url", "", "Mello API base URL (env: MELLO_BASE_URL)")
-	rootCmd.PersistentFlags().String("workspace-id", "", "Workspace ID (env: MELLO_WORKSPACE_ID)")
+	rootCmd.PersistentFlags().String("server-url", "", "Server URL (env: MEWORK_SERVER_URL / MELLO_BASE_URL)")
+	rootCmd.PersistentFlags().String("workspace-id", "", "Workspace ID (env: MEWORK_WORKSPACE_ID / MELLO_WORKSPACE_ID)")
 	rootCmd.PersistentFlags().String("profile", "", "Config profile name — isolates config, daemon state, and logs")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Print full error details on failure (env: MEWORK_DEBUG)")
 

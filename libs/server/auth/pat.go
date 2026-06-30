@@ -91,10 +91,16 @@ func (a *PATAuthenticator) Middleware(next http.Handler) http.Handler {
 
 		// MEWORK_DEV=1 bypasses Mello API validation and injects a synthetic
 		// identity. Useful for local development without a running Mello instance.
-		if os.Getenv("MEWORK_DEV") == "1" {
+		// When MelloBaseURL is empty (no Mello configured), behave the same way:
+		// the server is a standalone hub, not a Mello gateway.
+		if os.Getenv("MEWORK_DEV") == "1" || a.MelloBaseURL == "" {
 			devAccountID := os.Getenv("MEWORK_DEV_ACCOUNT")
 			if devAccountID == "" {
-				devAccountID = "dev-account"
+				if a.MelloBaseURL == "" {
+					devAccountID = "00000000-0000-0000-0000-000000000001"
+				} else {
+					devAccountID = "dev-account"
+				}
 			}
 			devTenantID := os.Getenv("MEWORK_DEV_TENANT")
 			if devTenantID == "" {

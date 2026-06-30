@@ -70,7 +70,7 @@ func LookupChannelSession(ctx context.Context, pool *pgxpool.Pool, channelKey st
 // channel's provider code and account ID, decrypts the token, and posts
 // the result. When pool is nil, this is a no-op so unit tests without a
 // database can still exercise the function signature.
-func ExecuteWriteBackFromChannel(ctx context.Context, pool *pgxpool.Pool, secretKey, melloBaseURL, channelKey, result string) error {
+func ExecuteWriteBackFromChannel(ctx context.Context, pool *pgxpool.Pool, secretKey, channelKey, result string) error {
 	if channelKey == "" {
 		return fmt.Errorf("channel key is required for channel-session writeback")
 	}
@@ -86,14 +86,13 @@ func ExecuteWriteBackFromChannel(ctx context.Context, pool *pgxpool.Pool, secret
 	// Resolve the provider connection and post the result.
 	// This follows the same pattern as ExecuteWriteBack but resolves
 	// the account/provider from the channel session instead of a job row.
-	return executeWriteBackFromSession(ctx, pool, secretKey, melloBaseURL, session, result)
+	return executeWriteBackFromSession(ctx, pool, secretKey, session, result)
 }
 
 // executeWriteBackFromSession posts the result to the provider using the
 // channel session's account ID, provider code, and resource ID.
-func executeWriteBackFromSession(ctx context.Context, pool *pgxpool.Pool, secretKey, melloBaseURL string, session *ChannelSession, result string) error {
+func executeWriteBackFromSession(ctx context.Context, pool *pgxpool.Pool, secretKey string, session *ChannelSession, result string) error {
 	_ = secretKey
-	_ = melloBaseURL
 	_ = result
 	return nil
 }

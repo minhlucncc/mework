@@ -31,7 +31,7 @@ func sessionEndpoint() (baseURL, token string, err error) {
 	}
 	token = ResolveToken(cfg)
 	if token == "" {
-		return "", "", fmt.Errorf("not authenticated — run `mework login --token <mello_pat_...>` or set MELLO_API_KEY")
+		return "", "", fmt.Errorf("not authenticated — set MEWORK_API_KEY or MELLO_API_KEY, or run `mework login`")
 	}
 	baseURL = cfg.ServerURL
 	if baseURL == "" {

@@ -19,10 +19,9 @@ import (
 	"mework/libs/server/middleware"
 	"mework/libs/server/notify"
 	"mework/libs/server/orchestrator"
-	"mework/libs/server/provider"
-	melloprovider "mework/libs/server/provider/mello"
 	"mework/libs/server/registry"
 	"mework/libs/server/session"
+	"mework/libs/server/unitqueue"
 	"mework/libs/server/webhook"
 	"mework/libs/shared/grant"
 )
@@ -85,18 +84,24 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 	sessionMgr := session.NewManager(msgBroker, session.DefaultConfig())
 	sessionHandlers := session.NewHandlers(sessionMgr, agentHandlers, msgBroker)
 
+	// Unit queue registry: name → session routing so callers can send messages
+	// to agents by name instead of by opaque session ID.
+	unitQueueReg := unitqueue.NewMemoryRegistry()
+	unitQueueHandlers := unitqueue.NewHandlers(unitQueueReg, msgBroker)
+
 	autoProvisioner := channel.NewAutoProvisioner(registrySvc, channelReg, sessionMgr, agentHandlers, msgBroker, registry.DefaultTenantID)
 	channelRouter := channel.NewRouter(channelReg, msgBroker, autoProvisioner, channelFeature)
 
-	webhookHandler := webhook.NewHandler(pool, msgBroker, cfg.MeworkSecretKey, cfg.MelloBaseURL, channelRouter)
-
-	melloAdapter := melloprovider.NewMelloAdapter(cfg.MelloBaseURL)
-	provider.Register(melloAdapter)
+	// The webhook handler is provider-agnostic: it delegates signature
+	// verification, event parsing, and task-detail fetching to whichever
+	// provider is registered (if any). When no provider is registered,
+	// the /webhooks/{provider} endpoint returns 404 (not configured).
+	webhookHandler := webhook.NewHandler(pool, msgBroker, cfg.MeworkSecretKey, channelRouter)
 
 	r.Post("/webhooks/{provider}", webhookHandler.ServeHTTP)
 
 	runtimeAuth := middleware.NewRuntimeAuthenticator(pool, cfg.ServerKey)
-	ackHandlers := orchestrator.NewAckHandlers(pool, cfg.MeworkSecretKey, cfg.MelloBaseURL)
+	ackHandlers := orchestrator.NewAckHandlers(pool, cfg.MeworkSecretKey)
 	claimHandlers := orchestrator.NewClaimHandlers(pool)
 
 	r.Route("/api/v1/jobs", func(r chi.Router) {
@@ -166,6 +171,13 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 			// Session chat bus (c0032, PAT/human): submit a turn and stream events.
 			r.Post("/sessions/{id}/messages", sessionHandlers.SendMessage)
 			r.Get("/sessions/{id}/stream", sessionHandlers.StreamSession)
+
+			// Unit queue routes: register/deregister/list/send by agent name.
+			r.Post("/unitqueues/{name}/register", unitQueueHandlers.RegisterAgent)
+			r.Post("/unitqueues/{name}/deregister", unitQueueHandlers.DeregisterAgent)
+			r.Get("/unitqueues", unitQueueHandlers.ListAgents)
+			r.Get("/unitqueues/{name}", unitQueueHandlers.GetAgent)
+			r.Post("/unitqueues/{name}/messages", unitQueueHandlers.SendMessage)
 		})
 
 		// Runtime-authenticated agent pull (rt_ Bearer + grant). Same /api/v1

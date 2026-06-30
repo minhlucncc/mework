@@ -18,7 +18,6 @@ import (
 	// Blank-import required server drivers so the in-process hub has its
 	// message bus, object storage, and provider adapters registered.
 	_ "mework/libs/server/bus/postgres"
-	_ "mework/libs/server/provider/mello"
 	_ "mework/libs/server/storage/fs"
 )
 

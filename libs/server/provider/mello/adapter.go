@@ -140,3 +140,25 @@ func (a *MelloAdapter) ChannelKey(rawPayload []byte) (string, string) {
 	}
 	return "mello", p.Data.TicketID
 }
+
+// WebhookHeaders returns the header names Mello uses for webhook verification.
+func (a *MelloAdapter) WebhookHeaders() provider.WebhookHeaderNames {
+	return provider.WebhookHeaderNames{
+		Signature:  "X-Mello-Signature",
+		Timestamp:  "X-Mello-Timestamp",
+		DeliveryID: "X-Mello-Delivery-Id",
+	}
+}
+
+// FetchTaskDetail retrieves the Mello ticket title and description.
+func (a *MelloAdapter) FetchTaskDetail(ctx context.Context, token, taskID string) (*provider.TaskDetail, error) {
+	client := mello.NewClient(a.melloBaseURL, token, 10*time.Second, "mework-server")
+	ticket, err := client.GetTicket(taskID)
+	if err != nil {
+		return nil, err
+	}
+	return &provider.TaskDetail{
+		Title:       ticket.Title,
+		Description: ticket.Description,
+	}, nil
+}

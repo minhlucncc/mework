@@ -28,16 +28,14 @@ type HeartbeatRequest struct {
 }
 
 type AckHandlers struct {
-	pool         *pgxpool.Pool
-	secretKey    string
-	melloBaseURL string
+	pool      *pgxpool.Pool
+	secretKey string
 }
 
-func NewAckHandlers(pool *pgxpool.Pool, secretKey, melloBaseURL string) *AckHandlers {
+func NewAckHandlers(pool *pgxpool.Pool, secretKey string) *AckHandlers {
 	return &AckHandlers{
-		pool:         pool,
-		secretKey:    secretKey,
-		melloBaseURL: melloBaseURL,
+		pool:      pool,
+		secretKey: secretKey,
 	}
 }
 
@@ -120,7 +118,7 @@ func (h *AckHandlers) AckJob(w http.ResponseWriter, r *http.Request) {
 			bgCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 
-			wbErr := writeback.ExecuteWriteBack(bgCtx, h.pool, h.secretKey, h.melloBaseURL, jobID)
+			wbErr := writeback.ExecuteWriteBack(bgCtx, h.pool, h.secretKey, jobID)
 			if wbErr != nil {
 				log.Printf("Asynchronous write-back for job %s failed: %v", jobID, wbErr)
 				_, dbErr := h.pool.Exec(context.Background(), `

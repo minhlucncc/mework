@@ -16,13 +16,13 @@ var loginToken string
 
 var loginCmd = &cobra.Command{
 	Use:     "login",
-	Short:   "Authenticate with a Mello personal access token",
+	Short:   "Authenticate with a personal access token (Mello)",
 	GroupID: groupAdditional,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		token := loginToken
 		// Empty --token (or omitted) → prompt, so the token avoids shell history.
 		if token == "" {
-			fmt.Print("Mello API token: ")
+			fmt.Print("API token: ")
 			reader := bufio.NewReader(os.Stdin)
 			line, _ := reader.ReadString('\n')
 			token = strings.TrimSpace(line)
@@ -93,6 +93,6 @@ var authLogoutCmd = &cobra.Command{
 }
 
 func init() {
-	loginCmd.Flags().StringVar(&loginToken, "token", "", "Mello personal access token (omit or pass empty to be prompted)")
+	loginCmd.Flags().StringVar(&loginToken, "token", "", "Personal access token — omit to be prompted")
 	authCmd.AddCommand(authStatusCmd, authLogoutCmd)
 }

@@ -16,7 +16,6 @@ import (
 	// Blank-import required drivers.
 	_ "mework/libs/server/bus/postgres"
 	_ "mework/libs/server/storage/fs"
-	_ "mework/libs/server/provider/mello"
 )
 
 func main() {

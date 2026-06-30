@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 )
 
-// DefaultBaseURL is the Mello REST API base when not overridden.
-const DefaultBaseURL = "https://mello.mezon.vn/api/v1"
+// DefaultBaseURL is the default server URL when not overridden.
+const DefaultBaseURL = "http://localhost:8080"
 
 // DaemonConfig holds the agent-runtime settings persisted in config.json.
 type DaemonConfig struct {
