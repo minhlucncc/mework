@@ -11,6 +11,19 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 ## [Unreleased]
 
 ### Added
+- Standalone Mezon worker binary (`apps/mework-mezon-worker/`) with independent inbound (WebSocket to enqueue) and outbound (poll to reply) loops, supporting crash recovery via cursor persistence (c0045-mezon-standalone-worker).
+- `POST /api/v1/jobs/enqueue` endpoint for workers to enqueue jobs with structured JSON payload (c0045-mezon-standalone-worker).
+- `GET /api/v1/jobs?provider=&status=&since=` endpoint for workers to poll completed jobs by provider (c0045-mezon-standalone-worker).
+
+### Changed
+- Mezon provider adapter refactored from server-embedded bot (`MezonBotService`) to standalone worker model; `RegisterAdapter()` no longer accepts a bot argument (c0045-mezon-standalone-worker).
+
+### Removed
+- Server-embedded `MezonBotService`, `SetupMezon()`, and Mezon startup code from `apps/mework-server/main.go` — the server no longer starts or manages the Mezon bot (c0045-mezon-standalone-worker).
+- Offline-mode Mezon bot (`runMezonBot()`, `MezonBot` interface, `SetMezonBot()`) — the worker requires a running hub (c0045-mezon-standalone-worker).
+- Mezon credential fields (`MezonAppID`, `MezonAPIKey`, `MezonBaseURL`) from `hub.Config` and related CLI config commands (c0045-mezon-standalone-worker).
+
+### Added
 - Mezon provider adapter with channel-key extraction, message parsing, and write-back via WebSocket (with REST fallback) for real-time conversational agent access (c0044-mezon-provider).
 - WebSocket-based Mezon bot client with appID:apiKey authentication, session token exchange, 10s heartbeat keepalive, and exponential-backoff reconnection (1s-30s) (c0044-mezon-provider).
 - Per-channel agent sessions for Mezon: each chat channel gets a dedicated sandbox session routed through the channel router (c0044-mezon-provider).

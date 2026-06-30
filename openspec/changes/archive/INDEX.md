@@ -7,3 +7,4 @@
 | 2026-06-30 | c0042-orchestrator-mcp | 9a515b92772bcaf960ad94d937c462102b050d94 | orchestrator MCP server: sandbox lifecycle, session context, and notification tools for AI agent orchestrators |
 | 2026-06-30 | c0043-offline-mode | 58e7c39283ca2e113119a217813beff0838fa910 | Offline mode: mework start --workspace . --offline for local-only agent execution triggered via CLI |
 | 2026-06-30 | c0044-mezon-provider | 12dda90ab0cb8d6e449018dfcbcfef18d5b8d935 | Add Mezon provider: bot client, channel routing, and conversational agent sessions |
+| 2026-06-30 | c0045-mezon-standalone-worker | 70ae4ac84f223df94783d498e2865d49d9fd0054 | Mezon standalone worker: independent bot process with job-queue enqueue and write-back |
