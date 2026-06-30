@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -68,6 +69,27 @@ func (a *RuntimeAuthenticator) Middleware(next http.Handler) http.Handler {
 		rtToken := parts[1]
 		if rtToken == "" {
 			http.Error(w, "Unauthorized: empty token", http.StatusUnauthorized)
+			return
+		}
+
+		// MEWORK_DEV=1 bypasses runtime token DB lookup for local development.
+		if os.Getenv("MEWORK_DEV") == "1" {
+			devRuntimeID := os.Getenv("MEWORK_DEV_RUNTIME")
+			if devRuntimeID == "" {
+				devRuntimeID = "dev-runtime"
+			}
+			devAccountID := os.Getenv("MEWORK_DEV_ACCOUNT")
+			if devAccountID == "" {
+				devAccountID = "dev-account"
+			}
+			devTenantID := os.Getenv("MEWORK_DEV_TENANT")
+			if devTenantID == "" {
+				devTenantID = "00000000-0000-0000-0000-000000000001"
+			}
+			ctx := context.WithValue(r.Context(), RuntimeIDKey, devRuntimeID)
+			ctx = context.WithValue(ctx, AccountIDKey, devAccountID)
+			ctx = context.WithValue(ctx, TenantIDKey, devTenantID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 

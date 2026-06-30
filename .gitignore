@@ -97,3 +97,4 @@ worktrees/
 openspec/changes/.ship-all-progress.json
 go.work.sum
 /mcp-server
+/mework-mcp
