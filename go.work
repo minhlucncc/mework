@@ -1,12 +1,13 @@
-go 1.26
+go 1.26.4
 
 use (
 	.
-	./libs/server
-	./libs/shared
+	./examples/mello-claude
 	./libs/client
 	./libs/sandbox
+	./libs/server
+	./libs/shared
 	./libs/tests
 	./libs/tools
-	./examples/mello-claude
+	./libs/mcp-server
 )
