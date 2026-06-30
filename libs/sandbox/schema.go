@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"mework/libs/shared/core"
+	"mework/libs/shared/policy"
 )
 
 // SandboxBundleMetadata defines the metadata structure that every sandbox
@@ -21,6 +22,7 @@ type SandboxBundleMetadata struct {
 	Image          string               `yaml:"image,omitempty" json:"image,omitempty"`
 	ResourceLimits *core.ResourceLimits `yaml:"resourceLimits,omitempty" json:"resourceLimits,omitempty"`
 	Author         string               `yaml:"author,omitempty" json:"author,omitempty"`
+	Policy         *policy.Policy       `yaml:"policy,omitempty" json:"policy,omitempty"`
 }
 
 // knownEngines is the allowlist of engines a definition may select. Adding a

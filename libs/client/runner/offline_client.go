@@ -36,9 +36,9 @@ type runResultFields struct {
 // JSON-RPC "run" request containing the instruction, and returns the exit
 // code from the agent's response.  The instruction text is sent inside the
 // JSON-RPC body — it is never placed on the command line (injection-safety
-// invariant).
-func SendInstruction(socketPath, instruction string) (int, error) {
-	_, exitCode, err := SendInstructionResult(socketPath, instruction)
+// invariant).  sender is an optional identity hint for policy enforcement.
+func SendInstruction(socketPath, instruction, sender string) (int, error) {
+	_, exitCode, err := SendInstructionResult(socketPath, instruction, sender)
 	return exitCode, err
 }
 
@@ -46,8 +46,9 @@ func SendInstruction(socketPath, instruction string) (int, error) {
 // JSON-RPC "run" request containing the instruction, and returns the output
 // text, exit code, and any error from the agent.  The instruction text is sent
 // inside the JSON-RPC body — it is never placed on the command line
-// (injection-safety invariant).
-func SendInstructionResult(socketPath, instruction string) (string, int, error) {
+// (injection-safety invariant).  sender is an optional identity hint for
+// policy enforcement.
+func SendInstructionResult(socketPath, instruction, sender string) (string, int, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return "", -1, fmt.Errorf("connect to offline agent at %s: %w", socketPath, err)
@@ -57,7 +58,7 @@ func SendInstructionResult(socketPath, instruction string) (string, int, error) 
 	req := runRequest{
 		JSONRPC: "2.0",
 		Method:  "run",
-		Params:  map[string]string{"instruction": instruction},
+		Params:  map[string]string{"instruction": instruction, "sender": sender},
 		ID:      1,
 	}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {

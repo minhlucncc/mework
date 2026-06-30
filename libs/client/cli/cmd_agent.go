@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/user"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"mework/libs/client/runner"
 )
 
 // agentCmd is the parent grouping command for agent operations.
@@ -53,20 +56,50 @@ var agentListCmd = &cobra.Command{
 		}
 
 		if showJSON {
-			enc := json.NewEncoder(out)
-			enc.SetIndent("", "  ")
-			return enc.Encode(queues)
-		}
+				// Include offline agents in JSON output.
+				type agentDisplay struct {
+					Name      string `json:"name"`
+					SessionID string `json:"session_id,omitempty"`
+					RunnerID  string `json:"runner_id,omitempty"`
+					Status    string `json:"status"`
+					Created   string `json:"created,omitempty"`
+					Backend   string `json:"backend,omitempty"`
+					Workspace string `json:"workspace,omitempty"`
+				}
+				var display []agentDisplay
+				for _, q := range queues {
+					display = append(display, agentDisplay{
+						Name: q.Name, SessionID: q.SessionID,
+						RunnerID: q.RunnerID, Status: q.Status, Created: q.Created,
+					})
+				}
+				offline, _ := runner.ListOfflineAgents()
+				for _, a := range offline {
+					display = append(display, agentDisplay{
+						Name: a.Name, Status: a.Status + " (local)",
+						Backend: a.Backend, Workspace: a.Workspace,
+					})
+				}
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				return enc.Encode(display)
+			}
 
-		tw := newTableTo(out)
-		row(tw, "NAME", "SESSION ID", "RUNNER", "STATUS")
-		if len(queues) == 0 {
-			row(tw, "(no online agents)")
-		}
-		for _, q := range queues {
-			row(tw, q.Name, q.SessionID, q.RunnerID, q.Status)
-		}
-		return tw.Flush()
+			// Fetch and display offline agents alongside hub agents.
+			offlineAgents, _ := runner.ListOfflineAgents()
+
+			tw := newTableTo(out)
+			row(tw, "NAME", "STATUS", "BACKEND", "WORKSPACE")
+			if len(queues) == 0 && len(offlineAgents) == 0 {
+				row(tw, "(no agents)")
+			}
+			for _, q := range queues {
+				row(tw, q.Name, q.Status, "hub", "")
+			}
+			for _, a := range offlineAgents {
+				row(tw, a.Name, a.Status+" (local)", a.Backend, a.Workspace)
+			}
+			return tw.Flush()
 	},
 }
 
@@ -81,6 +114,27 @@ var agentSendCmd = &cobra.Command{
 		message := strings.Join(args[1:], " ")
 		out := cmd.OutOrStdout()
 
+		// Check local offline registry first. If the agent is running
+		// locally, send directly via Unix socket — no hub needed.
+		if local, _ := runner.LookupOfflineAgent(name); local != nil {
+			if !runner.CheckAgentRunning(local.SocketPath) {
+				return fmt.Errorf("offline agent %q is registered but not reachable", name)
+			}
+			sender := resolveSender()
+		output, exitCode, err := runner.SendInstructionResult(local.SocketPath, message, sender)
+			if err != nil {
+				return err
+			}
+			if output != "" {
+				fmt.Fprint(out, output)
+			}
+			if exitCode != 0 {
+				return fmt.Errorf("task failed with exit code %d", exitCode)
+			}
+			return nil
+		}
+
+		// Not found locally — try the hub's unit queue API.
 		base, token, err := sessionEndpoint()
 		if err != nil {
 			return err
@@ -209,6 +263,16 @@ var agentSendCmd = &cobra.Command{
 		fmt.Fprintf(out, "message sent to %q\n", name)
 		return nil
 	},
+}
+
+// resolveSender returns the current OS username for use as the sender
+// identity in offline-mode agent messages.
+func resolveSender() string {
+	u, err := user.Current()
+	if err != nil {
+		return "unknown"
+	}
+	return u.Username
 }
 
 func init() {

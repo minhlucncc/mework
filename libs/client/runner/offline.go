@@ -10,7 +10,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
+	"mework/libs/shared/policy"
 	"mework/libs/sandbox"
 )
 
@@ -24,6 +26,8 @@ type OfflineServer struct {
 	done       chan struct{}
 	mu         sync.Mutex
 	closed     bool
+	policy     *policy.Policy
+	rateLimiter *policy.RateLimiter
 }
 
 // ---------------------------------------------------------------------------
@@ -50,6 +54,13 @@ func SocketPath(workspaceDir string) (string, error) {
 // NewOfflineServer creates a new OfflineServer bound to the given workspace
 // directory.  The session must already have been started (via
 // StartWorkspaceSession or OpenSession).
+// SetPolicy attaches a message policy to the server. When set, every
+// incoming "run" request is checked against the policy before execution.
+func (s *OfflineServer) SetPolicy(p *policy.Policy) {
+	s.policy = p
+	s.rateLimiter = policy.NewRateLimiter()
+}
+
 func NewOfflineServer(workspaceDir string, session *Session) (*OfflineServer, error) {
 	sockPath, err := SocketPath(workspaceDir)
 	if err != nil {
@@ -142,6 +153,7 @@ type jsonRPCResponse struct {
 // runParams is the expected params for the "run" method.
 type runParams struct {
 	Instruction string `json:"instruction"`
+	Sender      string `json:"sender,omitempty"`
 }
 
 // runResult is the result returned for a successful "run" invocation.
@@ -167,6 +179,42 @@ func (s *OfflineServer) handleConnection(ctx context.Context, conn net.Conn) {
 			sendJSONRPCError(conn, req.ID, -32602, "invalid params")
 			return
 		}
+
+		// ---- POLICY ENFORCEMENT ----
+		if s.policy != nil {
+			sender := params.Sender
+			if sender == "" {
+				sender = "anonymous"
+			}
+			attrs := policy.Attributes{
+				"sender":          sender,
+				"authenticated":   "true",
+				"content":         params.Instruction,
+				"content_length":  fmt.Sprint(len(params.Instruction)),
+				"time":            time.Now().UTC().Format(time.RFC3339),
+				"channel":         "local",
+			}
+			result, err := s.policy.Enforce(attrs)
+			if err != nil {
+				sendJSONRPCError(conn, req.ID, -32603, "policy error: "+err.Error())
+				return
+			}
+			if !result.Allowed {
+				sendJSONRPCError(conn, req.ID, -32001, result.Reason)
+				return
+			}
+			// Rate limit check
+			if result.Reason != "" {
+				if count, ok := policy.ParseLimit(result.Reason); ok {
+					if !s.rateLimiter.Allow(sender, count) {
+						sendJSONRPCError(conn, req.ID, -32002, "rate limit exceeded")
+						return
+					}
+				}
+			}
+		}
+		// ---- END POLICY ENFORCEMENT ----
+
 		s.handleRun(ctx, conn, req.ID, params.Instruction)
 	default:
 		sendJSONRPCError(conn, req.ID, -32601, "method not found")

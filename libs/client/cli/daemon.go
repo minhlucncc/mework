@@ -16,7 +16,10 @@ import (
 	"mework/libs/client/catalog"
 	"mework/libs/client/osproc"
 	"mework/libs/client/runner"
+	"mework/libs/server/bus/memory"
+	"mework/libs/server/session"
 	"mework/libs/shared/config"
+	"mework/libs/shared/grant"
 )
 
 var daemonCmd = &cobra.Command{
@@ -242,9 +245,76 @@ func runOfflineForeground(prof string) error {
 		return err
 	}
 
-	// TODO(c0043): Start workspace session, IPC listener, block until ctx.Done().
-	fmt.Println("offline daemon ready")
-	return nil
+	// Wire a self-contained in-process session: in-memory broker, local-only
+	// grant, and a file-system definition resolver from the workspace.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	broker := memory.New()
+	mgr := session.NewManager(broker, session.DefaultConfig())
+	_ = mgr // session manager; kept for future lifecycle use
+
+	key := []byte("offline-key")
+	localGrant, err := grant.NewGrant([]grant.Operation{grant.OpSpawn}, key)
+	if err != nil {
+		return fmt.Errorf("mint grant: %w", err)
+	}
+	caller := runner.Caller{
+		Account: "offline",
+		Tenant:  "offline",
+		Grant:   localGrant,
+	}
+
+	sess, err := runner.StartWorkspaceSession(ctx, runner.StartOptions{
+		Ref:          meta.Name + "@" + meta.Version,
+		Resolver:     &catalog.FileDefinitionResolver{WorkspaceDir: workspaceDir},
+		WorkspaceDir: workspaceDir,
+		Caller:       caller,
+		GrantKey:     key,
+		Broker:       broker,
+		Sessions:     mgr,
+		// ManagerFor is nil — falls through to runtime.NewManagerFor ("local" engine).
+	})
+	if err != nil {
+		return fmt.Errorf("start workspace session: %w", err)
+	}
+
+	// Start the Unix-socket IPC listener so mework send can connect.
+	srv, err := runner.NewOfflineServer(workspaceDir, sess)
+	if err != nil {
+		_ = sess.Close(ctx, caller)
+		return fmt.Errorf("offline server: %w", err)
+	}
+
+	// Attach message policy from mework.yml (if defined).
+	if meta.Policy != nil {
+		srv.SetPolicy(meta.Policy)
+	}
+
+	// Register as a local offline agent so "mework agent list" and
+	// "mework agent send <name>" can find it without a --workspace flag.
+	sockPath, _ := runner.SocketPath(workspaceDir)
+	agentInfo := runner.OfflineAgentInfo{
+		Name:       meta.Name,
+		SocketPath: sockPath,
+		Status:     "online",
+		Workspace:  workspaceDir,
+		Backend:    meta.Backend,
+	}
+	if regErr := runner.RegisterOfflineAgent(agentInfo); regErr != nil {
+		_ = sess.Close(ctx, caller)
+		return fmt.Errorf("register agent: %w", regErr)
+	}
+	defer runner.UnregisterOfflineAgent(meta.Name)
+
+	fmt.Printf("offline agent %q ready\n", meta.Name)
+
+	// Block until SIGINT/SIGTERM, then clean up.
+	if err := srv.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		_ = sess.Close(ctx, caller)
+		return err
+	}
+	return sess.Close(ctx, caller)
 }
 
 // tailLog prints the log file, optionally following appended lines.
