@@ -11,6 +11,20 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 ## [Unreleased]
 
 ### Added
+- Mezon provider adapter with channel-key extraction, message parsing, and write-back via WebSocket (with REST fallback) for real-time conversational agent access (c0044-mezon-provider).
+- WebSocket-based Mezon bot client with appID:apiKey authentication, session token exchange, 10s heartbeat keepalive, and exponential-backoff reconnection (1s-30s) (c0044-mezon-provider).
+- Per-channel agent sessions for Mezon: each chat channel gets a dedicated sandbox session routed through the channel router (c0044-mezon-provider).
+- Server-mode Mezon bot lifecycle as a long-lived goroutine inside mework-server dispatching incoming messages to the channel router (c0044-mezon-provider).
+- Offline-mode Mezon bot support: bot runs alongside the Unix socket in the offline daemon with policy-based message filtering and channel-directed replies (c0044-mezon-provider).
+- Mezon connection credentials (appID, apiKey) stored sealed in the provider_connections table (c0044-mezon-provider).
+
+### Changed
+- Channel routing extended to support real-time chat providers, routing Mezon messages by ("mezon", channel_id) through the channel.Router (c0044-mezon-provider).
+- Provider gateway supports chat-type providers with WebSocket-based event sources in addition to webhook-based task trackers (c0044-mezon-provider).
+- Offline agent spec extended for Mezon bot listener, policy enforcement with "channel" attribute, and credential configuration via mework.yml or env vars (c0044-mezon-provider).
+- Session-channel binding extended for chat channel lifecycle (auto-create, auto-destroy) and offline-mode binding without database dependency (c0044-mezon-provider).
+
+### Added
 - Offline-mode agent daemon (`mework start --workspace &lt;dir&gt; --offline`) that runs self-contained with no Postgres, hub, or provider dependency — zero-infrastructure local operation (c0043-offline-mode).
 - One-shot task submission via `mework run &lt;instruction&gt;` that sends instructions over stdin to a running offline agent and streams output to stdout in real-time (c0043-offline-mode).
 - Unix socket IPC layer for CLI-to-agent communication in offline mode, with workspace-hash-derived socket paths and PID-file-based lifecycle management via `mework stop` (c0043-offline-mode).
