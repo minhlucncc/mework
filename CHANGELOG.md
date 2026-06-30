@@ -11,6 +11,9 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 ## [Unreleased]
 
 ### Added
+- Offline-mode agent daemon (`mework start --workspace &lt;dir&gt; --offline`) that runs self-contained with no Postgres, hub, or provider dependency — zero-infrastructure local operation (c0043-offline-mode).
+- One-shot task submission via `mework run &lt;instruction&gt;` that sends instructions over stdin to a running offline agent and streams output to stdout in real-time (c0043-offline-mode).
+- Unix socket IPC layer for CLI-to-agent communication in offline mode, with workspace-hash-derived socket paths and PID-file-based lifecycle management via `mework stop` (c0043-offline-mode).
 - Orchestrator MCP server (`mework-mcp`): stdio-based binary exposing sandbox lifecycle, notification, and session context tools via the Model Context Protocol (c0042-orchestrator-mcp).
 - Sandbox lifecycle MCP tools: `spawn_sandbox`, `get_sandbox_status`, `list_child_sandboxes`, `destroy_sandbox`, and `wait_for_sandbox` for orchestrating child sandboxes from within a session (c0042-orchestrator-mcp).
 - Notification MCP tools: `notify_human` (publish message to session output) and `ask_human` (publish question, block for response) for bidirectional human communication (c0042-orchestrator-mcp).
@@ -23,6 +26,7 @@ OpenSpec change, tagged with the change name) and curated into releases by hand.
 
 ### Changed
 
+- `mework daemon start` now accepts `--offline` and `--workspace` flags to skip hub enrollment and start a workspace-bound agent directly (c0043-offline-mode).
 - Daemon now drives a long-lived sandbox per session (in addition to one-shot dispatch), routing each chat turn over stdin and streaming per-turn events over the message bus, while preserving the stdin-not-argv and one-agent-per-sandbox invariants (c0026-prebuilt-agent-sandbox).
 - Normalize the parsed workflow keyword to canonical lowercase so triggers like `@mework dev Review …` map to `review` (c0007-normalize-workflow-keyword).
 
