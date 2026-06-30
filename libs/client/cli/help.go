@@ -83,13 +83,11 @@ var configKeys = map[string]func(*config.Config, string){
 	"rt_token":               func(c *config.Config, v string) { c.RuntimeToken = v },
 	"daemon.trigger_keyword": func(c *config.Config, v string) { c.Daemon.TriggerKeyword = v },
 	"daemon.done_column_id":  func(c *config.Config, v string) { c.Daemon.DoneColumnID = v },
-	"mezon.app-id":           func(c *config.Config, v string) { c.MezonAppID = v },
-	"mezon.api-key":          func(c *config.Config, v string) { c.MezonAPIKey = v },
 }
 
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
-	Short: "Set a config value (keys: base_url, workspace_id, server_url, rt_token, daemon.trigger_keyword, daemon.done_column_id, mezon.app-id, mezon.api-key)",
+	Short: "Set a config value (keys: base_url, workspace_id, server_url, rt_token, daemon.trigger_keyword, daemon.done_column_id)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key, value := args[0], args[1]

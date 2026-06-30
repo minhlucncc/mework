@@ -174,7 +174,49 @@ Content-Type: application/json
 {"status":"ok"}
 ```
 
-## 7. Backup & recovery
+## 7. Mezon worker (`mework-mezon-worker`)
+
+The `mework-mezon-worker` binary is a standalone process that connects to Mezon's real-time
+gateway via WebSocket, enqueues received channel messages as jobs via the server API, and
+independently polls for completed jobs to post replies back to Mezon channels. It requires a
+running `mework-server` hub.
+
+### Configuration
+
+The worker is configured entirely through environment variables:
+
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `MEZON_APP_ID` | string | **yes** | — | Mezon application ID for bot authentication |
+| `MEZON_API_KEY` | string | **yes** | — | Mezon API key for bot authentication |
+| `MEZON_BASE_URL` | string | no | `https://api.mezon.vn` | Mezon API base URL |
+| `MEWORK_SERVER_URL` | string | no | `http://localhost:8080` | Hub server URL |
+| `MEWORK_TOKEN` | string | **yes** | — | Runtime token for server API authentication |
+| `POLL_INTERVAL` | duration | no | `5s` | Outbound loop poll interval |
+
+### Start / stop
+
+```bash
+# Build (part of make build)
+make build-mework-mezon-worker
+
+# Run
+MEZON_APP_ID=your_app_id \
+MEZON_API_KEY=your_api_key \
+MEWORK_TOKEN=your_runtime_token \
+MEWORK_SERVER_URL=http://hub-server:8080 \
+./bin/mework-mezon-worker
+```
+
+Stop with SIGINT or SIGTERM for graceful shutdown (closes the WebSocket connection, flushes
+pending outbound messages).
+
+### Crash recovery
+
+The worker persists a cursor to a local `.cursor.json` file so that after a restart it
+resumes polling from the last processed job. Delete the cursor file to reset.
+
+## 8. Backup & recovery
 
 All durable state (accounts, runtimes, profiles, job history, sealed connections) lives
 in PostgreSQL, so a periodic database dump is sufficient.

@@ -103,12 +103,16 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 	runtimeAuth := middleware.NewRuntimeAuthenticator(pool, cfg.ServerKey)
 	ackHandlers := orchestrator.NewAckHandlers(pool, cfg.MeworkSecretKey)
 	claimHandlers := orchestrator.NewClaimHandlers(pool)
+	enqueueHandlers := orchestrator.NewEnqueueHandlers(pool)
+	jobsHandlers := orchestrator.NewJobsHandlers(pool)
 
 	r.Route("/api/v1/jobs", func(r chi.Router) {
 		r.Use(runtimeAuth.Middleware)
 		r.Post("/{id}/ack", ackHandlers.AckJob)
 		r.Post("/claim", claimHandlers.ClaimJob)
 		r.Post("/{id}/heartbeat", ackHandlers.Heartbeat)
+		r.Post("/enqueue", enqueueHandlers.EnqueueJob)
+		r.Get("/", jobsHandlers.ListJobs)
 		r.Get("/subscribe", sseHandler.Subscribe)
 		r.Post("/messages/{msgID}/ack", msgAckHandler.Ack)
 	})

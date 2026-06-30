@@ -23,6 +23,10 @@ replaced by the restructure):
 - **`apps/mework-server`** — the standalone provider-gateway HTTP server. Server-side packages:
   `libs/server/{hub,auth,middleware,registry,connection,catalog,session,bus,orchestrator,
   webhook,writeback,channel,provider,platform,storage}`.
+- **`apps/mework-mezon-worker`** — the standalone Mezon worker binary. Runs as a separate
+  process: the inbound loop receives Mezon channel messages via WebSocket and enqueues them
+  via `POST /api/v1/jobs/enqueue`; the outbound loop independently polls for completed jobs
+  and posts replies back to Mezon channels via the bot client.
 - **`libs/sandbox`** — pluggable engines (`local`/`docker`/cloudflare/custom) + runtime
   manager; `libs/sandbox/cmd/mework-sandbox` is a standalone runner *(stub today)*.
 - **`libs/shared`** — `core` types, `transport` wire contract, `config`, `grant`, `providers`.
@@ -226,6 +230,7 @@ server: durable outbox  ──▶  provider REST API (e.g. Mello CreateComment) 
 |------|----------------|
 | `apps/mework/` | CLI + daemon entrypoint + `server start` (wires the in-process hub via `cli.SetServerStarter`) |
 | `apps/mework-server/` | Standalone server entrypoint: load config → migrate → chi server with graceful shutdown |
+| `apps/mework-mezon-worker/` | Standalone Mezon worker: inbound loop receives WebSocket messages and enqueues jobs via the server API; outbound loop polls for completed jobs and posts replies to Mezon |
 | `libs/client/cli/` | cobra commands `cmd_*.go` (board, ticket, workspace, daemon, runner, runtime, agent, session, sandbox, server, profile, provider, auth, config, version) + config persistence (`~/.mework/`) |
 | `libs/client/runner/` | daemon lifecycle, SSE `Engine` (dispatch loop), one-shot + interactive `Session` execution |
 | `libs/client/{enroll,subscribe,catalog,workspacefs}/` | runner enrollment, SSE client, definition resolvers (HTTP/file), workspace artifact I/O |

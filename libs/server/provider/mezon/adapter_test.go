@@ -229,15 +229,15 @@ func TestMezonAdapter_ExtractContainerID(t *testing.T) {
 // TestMezonAdapter_RegisterAndLookup
 // ---------------------------------------------------------------------------
 
+// TestMezonAdapter_RegisterAndLookup registers the Mezon adapter via
+// RegisterAdapter() without a bot argument (the new signature) and verifies
+// the adapter is registered under the "mezon" code.
 func TestMezonAdapter_RegisterAndLookup(t *testing.T) {
-	bot := defaultMockBot()
-	adapter := NewMezonAdapter(bot)
-
 	// Save any previous adapter for cleanup.
 	prev, _ := provider.Get("mezon")
 
-	// Register the adapter
-	provider.Register(adapter)
+	// Register the adapter without a bot argument (new signature).
+	RegisterAdapter()
 	t.Cleanup(func() {
 		if prev != nil {
 			provider.Register(prev)
@@ -249,7 +249,7 @@ func TestMezonAdapter_RegisterAndLookup(t *testing.T) {
 	if !ok {
 		t.Fatal("provider.Get(\"mezon\") returned ok=false")
 	}
-	if got != adapter {
-		t.Errorf("provider.Get(\"mezon\") returned different instance")
+	if got.Code() != "mezon" {
+		t.Errorf("adapter.Code() = %q, want %q", got.Code(), "mezon")
 	}
 }

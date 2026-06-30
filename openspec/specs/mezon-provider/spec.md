@@ -8,12 +8,13 @@ Define the Mezon provider adapter that registers with the provider gateway under
 
 ### Requirement: Provider adapter registration
 
-The Mezon adapter SHALL register itself with the global provider registry under the code `"mezon"`. It SHALL be registered at server startup alongside other providers.
+The Mezon adapter SHALL register itself with the global provider registry under the code `"mezon"` without requiring a bot argument. The `RegisterAdapter()` function SHALL NOT accept a bot parameter. The adapter is registered standalone -- server-side write-back to Mezon is not supported (the worker handles outbound replies).
 
-#### Scenario: Register Mezon adapter
+#### Scenario: Register adapter without bot
 
-- **WHEN** the server starts with Mezon configuration present
-- **THEN** the `"mezon"` provider is registered in the global registry and can be looked up by code
+- **WHEN** the server starts and registers the Mezon adapter
+- **THEN** `RegisterAdapter()` is called without a bot argument
+- **THEN** the adapter is registered in the global provider registry under code `"mezon"`
 
 #### Scenario: Look up Mezon adapter
 
@@ -33,20 +34,6 @@ The Mezon adapter SHALL implement `ChannelKey(rawPayload) -> (providerCode, reso
 
 - **WHEN** the adapter's `ChannelKey` is called with a group channel message payload containing `channel_id = "ch_xyz789"`
 - **THEN** it returns `("mezon", "ch_xyz789")`
-
-### Requirement: Write-back to Mezon channel
-
-The Mezon adapter SHALL implement `WriteBack(ctx, token, taskID, body)` that sends a message to a Mezon channel. The `taskID` parameter SHALL be the Mezon channel ID. The message SHALL be sent via the active bot WebSocket connection when available, falling back to the REST API.
-
-#### Scenario: Write-back via WebSocket
-
-- **WHEN** `WriteBack` is called with `taskID = "ch_abc"` and `body = "Task complete"`
-- **THEN** the adapter sends the message to channel `"ch_abc"` over the bot's WebSocket connection
-
-#### Scenario: Write-back via REST fallback
-
-- **WHEN** `WriteBack` is called and the bot's WebSocket is disconnected
-- **THEN** the adapter sends the message to the channel via the Mezon REST API
 
 ### Requirement: Event parsing from Mezon messages
 

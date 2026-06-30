@@ -13,13 +13,19 @@ LDFLAGS        := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X m
 	build-shared build-server build-client build-sandbox build-all \
 	test-shared test-server test-client test-sandbox test-all
 
-build: build-mework build-mework-server
+build: build-mework build-mework-server build-mework-mezon-worker
 
 build-mework:
 	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
 build-mework-server:
 	go build -ldflags "$(LDFLAGS)" -o bin/$(SERVER_BINARY) $(SERVER_CMD)
+
+WORKER_BINARY  := mework-mezon-worker
+WORKER_CMD     := ./apps/mework-mezon-worker
+
+build-mework-mezon-worker:
+	go build -ldflags "$(LDFLAGS)" -o bin/$(WORKER_BINARY) $(WORKER_CMD)
 
 server: build-mework-server
 

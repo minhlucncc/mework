@@ -203,6 +203,12 @@ func (b *Bot) Stop() error {
 	return err
 }
 
+// UserID returns the authenticated bot user ID, or empty string if not
+// yet authenticated. This is used by the worker for self-message filtering.
+func (b *Bot) UserID() string {
+	return b.botUserID
+}
+
 // SendMessage sends a text message to the given channel via the SDK. Returns
 // nil when sdkClient is nil (no-op bot).
 func (b *Bot) SendMessage(ctx context.Context, channelID, text string) error {
