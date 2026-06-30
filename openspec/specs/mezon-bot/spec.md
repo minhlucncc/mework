@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the Mezon bot client that maintains a persistent WebSocket connection to Mezon's real-time gateway, authenticates with app credentials, receives channel messages, and sends replies. The bot client is used both by the server-side channel router (via a daemon proxy) and by the offline-mode agent. Owned by `libs/shared/providers/mezon/` and `libs/server/mezon/`.
+Define the Mezon bot client that maintains a persistent WebSocket connection to Mezon's real-time gateway, authenticates with app credentials, receives channel messages, and sends replies. The bot client is imported and used by the standalone `mework-mezon-worker` binary. Owned by `libs/server/provider/mezon/bot/`.
 
 ## Requirements
 
