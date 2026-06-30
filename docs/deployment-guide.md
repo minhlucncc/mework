@@ -193,6 +193,9 @@ The worker is configured entirely through environment variables:
 | `MEWORK_SERVER_URL` | string | no | `http://localhost:8080` | Hub server URL |
 | `MEWORK_TOKEN` | string | **yes** | — | Runtime token for server API authentication |
 | `POLL_INTERVAL` | duration | no | `5s` | Outbound loop poll interval |
+| `REDIS_URL` | string | no | — | Redis URL for turbo engine state. Optional for development — when empty the worker starts an embedded in-memory Redis (state is lost on restart). Required for production deployments where state persistence is needed. |
+
+> **Note:** When `REDIS_URL` is empty or unset, the worker starts an embedded in-memory Redis server (`miniredis`) for the turbo engine's state store (message dedup, channel cursors, activity tracking). All state is ephemeral and lost on restart. The worker logs `WARNING: using embedded in-memory state, lost on restart` at startup to make this visible. Set `REDIS_URL` to a real Redis instance for production deployments where state persistence across restarts is required.
 
 ### Start / stop
 

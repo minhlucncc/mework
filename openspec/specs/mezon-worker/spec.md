@@ -62,7 +62,7 @@ The worker SHALL use a cursor to avoid processing the same job twice and SHALL p
 
 ### Requirement: Worker is configured via environment
 
-The worker SHALL read its configuration from environment variables: `MEZON_APP_ID`, `MEZON_API_KEY`, `MEZON_BASE_URL` (optional), `MEWORK_SERVER_URL` (default `http://localhost:8080`), and `MEWORK_TOKEN` (runtime token for API auth).
+The worker SHALL read its configuration from environment variables: `MEZON_APP_ID`, `MEZON_API_KEY`, `MEZON_BASE_URL` (optional), `MEWORK_SERVER_URL` (default `http://localhost:8080`), `MEWORK_TOKEN` (runtime token for API auth), and `REDIS_URL` (optional, default: embedded in-memory Redis). When `REDIS_URL` is unset, the worker SHALL start an embedded in-memory Redis server (`miniredis`) for the turbo engine's state store (message dedup, channel cursors, activity tracking). State is lost on restart when using the embedded fallback.
 
 #### Scenario: Start with minimal config
 
@@ -73,6 +73,26 @@ The worker SHALL read its configuration from environment variables: `MEZON_APP_I
 
 - **WHEN** the worker starts without `MEZON_APP_ID`, `MEZON_API_KEY`, or `MEWORK_TOKEN`
 - **THEN** it prints an error listing the missing variables and exits with a non-zero exit code
+
+#### Scenario: Worker starts without Redis
+
+- **WHEN** the worker starts without `REDIS_URL` set
+- **THEN** it starts an embedded miniredis server
+- **THEN** it logs a warning: `WARNING: using embedded in-memory state, lost on restart`
+- **THEN** the turbo engine operates normally with in-memory state
+
+#### Scenario: Worker starts with Redis
+
+- **WHEN** the worker starts with `REDIS_URL` set to a valid Redis URL
+- **THEN** it connects to the external Redis server
+- **THEN** state is persistent across restarts
+
+#### Scenario: Worker restarts without Redis
+
+- **WHEN** the worker running with miniredis is restarted
+- **THEN** all state (dedup cursors, channel tracking, activity) is lost
+- **THEN** the worker re-learns channels from inbound messages
+- **THEN** duplicate message delivery may occur for messages seen before the restart
 
 ### Requirement: Isolated inbound and outbound loops
 

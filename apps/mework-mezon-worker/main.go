@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mezon/mezon-go-sdk-turbo/lib/rest"
@@ -39,20 +40,10 @@ func main() {
 		cancel()
 	}()
 
-	// Connect to Redis.
-	var rdb redis.Cmdable
-	if cfg.RedisURL != "" {
-		redisOpts, err := redis.ParseURL(cfg.RedisURL)
-		if err != nil {
-			log.Fatalf("invalid REDIS_URL: %v", err)
-		}
-		rdb = redis.NewClient(redisOpts)
-		if err := rdb.Ping(ctx).Err(); err != nil {
-			log.Fatalf("redis ping failed: %v", err)
-		}
-		log.Println("redis connected")
-	} else {
-		log.Fatal("REDIS_URL is required")
+	// Connect to Redis (real or embedded miniredis).
+	rdb, err := connectRedis(ctx, cfg)
+	if err != nil {
+		log.Fatalf("redis setup: %v", err)
 	}
 
 	restClient := rest.New("https://gw.mezon.ai")
@@ -172,6 +163,37 @@ func main() {
 	// Run the turbo engine (blocks until ctx cancelled).
 	engine.Run(ctx)
 	log.Println("worker stopped")
+}
+
+// connectRedis returns a redis.Cmdable backed either by a real Redis server
+// (when cfg.RedisURL is set) or an embedded in-memory miniredis (when empty).
+func connectRedis(ctx context.Context, cfg *Config) (redis.Cmdable, error) {
+	if cfg.RedisURL != "" {
+		redisOpts, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid REDIS_URL: %w", err)
+		}
+		rdb := redis.NewClient(redisOpts)
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			return nil, fmt.Errorf("redis ping: %w", err)
+		}
+		log.Println("redis connected")
+		return rdb, nil
+	}
+
+	// No external Redis configured; use embedded in-memory miniredis.
+	s, err := miniredis.Run()
+	if err != nil {
+		return nil, fmt.Errorf("miniredis start: %w", err)
+	}
+	log.Println("WARNING: REDIS_URL not set — using embedded in-memory Redis (state lost on restart)")
+	log.Println("For production, set REDIS_URL=redis://... for persistent state")
+
+	rdb := redis.NewClient(&redis.Options{Addr: s.Addr()})
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("miniredis ping: %w", err)
+	}
+	return rdb, nil
 }
 
 func intEnv(key string, fallback int) int {
