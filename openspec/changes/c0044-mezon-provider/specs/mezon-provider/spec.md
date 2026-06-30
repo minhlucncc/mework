@@ -1,10 +1,6 @@
 # Mezon Provider
 
-## Purpose
-
-Define the Mezon provider adapter that integrates Mezon as a first-class provider in mework's provider-agnostic adapter system. The adapter implements the `Provider` interface, enabling message parsing, channel key extraction, and write-back (send messages to Mezon channels) — all without requiring webhooks.
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: Provider adapter registration
 

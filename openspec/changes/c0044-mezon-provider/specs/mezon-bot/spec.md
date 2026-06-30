@@ -1,10 +1,6 @@
 # Mezon Bot
 
-## Purpose
-
-Define the WebSocket-based Mezon bot client: a long-lived connection to the Mezon real-time gateway that authenticates via bot credentials, receives channel messages, maintains heartbeat, auto-reconnects on failure, and dispatches received messages to the channel router (server mode) or the offline daemon (offline mode).
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: Bot authentication
 
