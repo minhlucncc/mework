@@ -191,6 +191,15 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 		r.Post("/{id}/events", sessionHandlers.ReceiveEvents)
 	})
 
+	// Daemon presence endpoints (runtime-auth, rt_ Bearer) — note: MUST use a
+	// separate prefix from /sessions to avoid chi's route parameter shadowing.
+	r.Route("/api/v1/runners/presence", func(r chi.Router) {
+		r.Use(runtimeAuth.Middleware)
+		r.Post("/{id}/online", registry.NewPresenceHandler(pool, "online"))
+		r.Post("/{id}/offline", registry.NewPresenceHandler(pool, "offline"))
+		r.Post("/{id}/heartbeat", registry.NewPresenceHandler(pool, "online"))
+	})
+
 	// Start background notification retry sweeper.
 	startNotifySweeper(context.Background(), notifierSvc)
 

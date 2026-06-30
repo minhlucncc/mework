@@ -31,15 +31,15 @@ func presencePOST(ctx context.Context, hubURL, runnerID, secret, path string) er
 
 // Heartbeat posts a heartbeat to the hub to extend the runner's presence TTL.
 func Heartbeat(ctx context.Context, hubURL, runnerID, secret string) error {
-	return presencePOST(ctx, hubURL, runnerID, secret, fmt.Sprintf("/api/v1/runners/%s/heartbeat", runnerID))
+	return presencePOST(ctx, hubURL, runnerID, secret, fmt.Sprintf("/api/v1/runners/presence/%s/heartbeat", runnerID))
 }
 
 // SetOnline marks the runner as online on the hub after a successful SSE connect.
 func SetOnline(ctx context.Context, hubURL, runnerID, secret string) error {
-	return presencePOST(ctx, hubURL, runnerID, secret, fmt.Sprintf("/api/v1/runners/%s/online", runnerID))
+	return presencePOST(ctx, hubURL, runnerID, secret, fmt.Sprintf("/api/v1/runners/presence/%s/online", runnerID))
 }
 
 // SetOffline marks the runner as offline on the hub on disconnect or graceful stop.
 func SetOffline(ctx context.Context, hubURL, runnerID, secret string) error {
-	return presencePOST(ctx, hubURL, runnerID, secret, fmt.Sprintf("/api/v1/runners/%s/offline", runnerID))
+	return presencePOST(ctx, hubURL, runnerID, secret, fmt.Sprintf("/api/v1/runners/presence/%s/offline", runnerID))
 }
