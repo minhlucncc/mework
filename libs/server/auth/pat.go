@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +86,24 @@ func (a *PATAuthenticator) Middleware(next http.Handler) http.Handler {
 		patToken := parts[1]
 		if patToken == "" {
 			http.Error(w, "Unauthorized: empty token", http.StatusUnauthorized)
+			return
+		}
+
+		// MEWORK_DEV=1 bypasses Mello API validation and injects a synthetic
+		// identity. Useful for local development without a running Mello instance.
+		if os.Getenv("MEWORK_DEV") == "1" {
+			devAccountID := os.Getenv("MEWORK_DEV_ACCOUNT")
+			if devAccountID == "" {
+				devAccountID = "dev-account"
+			}
+			devTenantID := os.Getenv("MEWORK_DEV_TENANT")
+			if devTenantID == "" {
+				devTenantID = "00000000-0000-0000-0000-000000000001"
+			}
+			ctx := context.WithValue(r.Context(), AccountIDKey, devAccountID)
+			ctx = context.WithValue(ctx, PATTokenKey, patToken)
+			ctx = context.WithValue(ctx, TenantIDKey, devTenantID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
