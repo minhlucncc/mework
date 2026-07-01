@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // executeDaemonStart sets flags on daemonStartCmd and calls RunE directly,
@@ -16,7 +17,6 @@ func executeDaemonStart(t *testing.T, flags map[string]string) (string, error) {
 	var out bytes.Buffer
 	daemonStartCmd.SetOut(&out)
 	daemonStartCmd.SetErr(&out)
-	daemonStartCmd.SetContext(context.Background())
 	for k, v := range flags {
 		if err := daemonStartCmd.Flags().Set(k, v); err != nil {
 			return "", err
@@ -101,6 +101,13 @@ func TestStartOfflineValidWorkspace(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	daemonStartCmd.SetContext(ctx)
+
+	// Cancel asynchronously after a short delay so the server starts,
+	// then srv.Start returns cleanly via context.Canceled.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
 
 	_, err := executeDaemonStart(t, map[string]string{
 		"offline":   "true",

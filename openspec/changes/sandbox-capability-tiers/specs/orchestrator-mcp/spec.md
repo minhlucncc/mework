@@ -1,23 +1,7 @@
-# MODIFIED
+## MODIFIED Requirements
 
-## Purpose
+### Requirement: Sandbox lifecycle MCP tools
 
-Update the orchestrator MCP specification so that child sandboxes spawned via
-the `spawn_sandbox` tool are created with the worker tier, granting full
-read-write access within the workspace.
-
-## Requirements
-
-### MODIFIED: Requirement: Sandbox lifecycle MCP tools
-
-**Before:**
-The MCP server SHALL expose five sandbox lifecycle tools: `spawn_sandbox`,
-`get_sandbox_status`, `list_child_sandboxes`, `destroy_sandbox`, and
-`wait_for_sandbox`. These SHALL call the existing `ports.SandboxDriver` /
-`sandbox/runtime.Manager` interfaces and track child sandboxes in an in-memory
-registry scoped to the MCP server process.
-
-**After:**
 The MCP server SHALL expose five sandbox lifecycle tools: `spawn_sandbox`,
 `get_sandbox_status`, `list_child_sandboxes`, `destroy_sandbox`, and
 `wait_for_sandbox`. These SHALL call the existing `ports.SandboxDriver` /

@@ -1,29 +1,7 @@
-# MODIFIED
+## MODIFIED Requirements
 
-## Purpose
+### Requirement: Command surface
 
-Update the CLI command surface and the orchestrator startup path so that
-`mework daemon start --offline` creates the orchestrator sandbox with
-AccessTier `observer`, and `sandbox start` propagates AccessTier through
-the sandbox lifecycle.
-
-## Requirements
-
-### MODIFIED: Requirement: Command surface
-
-**Before:**
-The system SHALL provide commands grouped as: Core (provider task management:
-`workspace list`; `board list/get`; `ticket list/get/create/move`;
-`comment list/add`; `search`), Runner (`runner enroll` for install-once
-enrollment; `daemon start/stop/status/restart/logs`; read-only `agent list`;
-`server start` to run the hub in-process; a `session` group to inspect and drive
-interactive sessions — `session list`, `session create`, `session send`,
-`session attach`, `session close`; and a `sandbox` group — `sandbox start`,
-`sandbox list`, `sandbox stop`, `sandbox send`), and Additional (`login`; `auth
-status/logout`; `config show/set`; `provider connect`; `version`). Read commands
-SHALL support `--json` output.
-
-**After:**
 The system SHALL provide commands grouped as: Core (provider task management:
 `workspace list`; `board list/get`; `ticket list/get/create/move`;
 `comment list/add`; `search`), Runner (`runner enroll` for install-once
@@ -48,14 +26,16 @@ start` SHALL create the orchestrator sandbox with AccessTier `observer`. The
 - **WHEN** the user runs `mework sandbox start --workspace .`
 - **THEN** the CLI reports both the sandbox id and its AccessTier value
 
-### ADDED: Requirement: Observer tier enforces cwd scoping
+## ADDED Requirements
 
-When `mework daemon start --offline` starts the orchestrator with AccessTier
-`observer`, the local engine SHALL bind the sandbox working directory to the
-configured workspace path. The local engine SHALL NOT enforce OS-level command
-filtering for the observer tier; the agent SHALL be instructed to self-restrict
-via CLAUDE.md observer-mode guidance. The sandbox SHALL report the AccessTier
-through `SandboxCaps()`.
+### Requirement: Observer tier enforces cwd scoping
+
+The local engine SHALL bind the sandbox working directory to the configured
+workspace path when the orchestrator starts with AccessTier `observer` via
+`mework daemon start --offline`. The local engine SHALL NOT enforce OS-level
+command filtering for the observer tier; the agent SHALL be instructed to
+self-restrict via CLAUDE.md observer-mode guidance. The sandbox SHALL report
+the AccessTier through `SandboxCaps()`.
 
 #### Scenario: Observer sandbox working directory is workspace-bound
 

@@ -1,37 +1,19 @@
-# MODIFIED
+## MODIFIED Requirements
 
-## Purpose
+### Requirement: Safe, isolated execution
 
-Add the `AccessTier` type to core types and propagate it through `RunSpec`,
-`SandboxCaps`, and `SandboxBundleMetadata` so that the daemon runtime can
-create sandboxes with different capability tiers. Extend the safe-execution
-requirement to scope execution according to the requested tier.
-
-## Requirements
-
-### MODIFIED: Requirement: Safe, isolated execution
-
-**Before:**
-The system SHALL feed the prompt (and, for interactive sessions, **each turn**) to the
-backend over **stdin, never as a shell argument** (ticket/turn content is
-attacker-controllable), execute in an isolated per-job/per-session working directory,
-and bound each run by a timeout. A **one-shot** run is bounded by a per-run timeout
-(default 30 minutes). A **long-lived interactive** sandbox is instead bounded by its
-**session lifecycle** — explicit close or idle reaping — rather than a single per-run
-timeout, while individual turns MAY still carry a per-turn bound.
-
-**After:**
-The system SHALL feed the prompt (and, for interactive sessions, **each turn**) to the
-backend over **stdin, never as a shell argument** (ticket/turn content is
+The system SHALL feed the prompt (and, for interactive sessions, **each turn**) to
+the backend over **stdin, never as a shell argument** (ticket/turn content is
 attacker-controllable), execute in a working directory whose scope depends on the
-sandbox `AccessTier`, and bound each run by a timeout. A **one-shot** run is bounded
-by a per-run timeout (default 30 minutes). A **long-lived interactive** sandbox is
-instead bounded by its **session lifecycle** — explicit close or idle reaping —
-rather than a single per-run timeout, while individual turns MAY still carry a
-per-turn bound. The sandbox `RunSpec` and `SandboxCaps` SHALL carry an `AccessTier`
-field that determines the capability level: `observer` (read-only, cwd-scoped),
-`worker` (full read-write within workspace), or `isolated` (container-isolated,
-future). When `AccessTier` is the empty string, it SHALL be treated as `worker`.
+sandbox `AccessTier`, and bound each run by a timeout. A **one-shot** run is
+bounded by a per-run timeout (default 30 minutes). A **long-lived interactive**
+sandbox is instead bounded by its **session lifecycle** — explicit close or idle
+reaping — rather than a single per-run timeout, while individual turns MAY still
+carry a per-turn bound. The sandbox `RunSpec` and `SandboxCaps` SHALL carry an
+`AccessTier` field that determines the capability level: `observer` (read-only,
+cwd-scoped), `worker` (full read-write within workspace), or `isolated`
+(container-isolated, future). When `AccessTier` is the empty string, it SHALL be
+treated as `worker`.
 
 #### Scenario: RunSpec with AccessTier creates a scoped sandbox
 
@@ -54,7 +36,9 @@ future). When `AccessTier` is the empty string, it SHALL be treated as `worker`.
 - **THEN** the prompt is written to the process stdin and never appears in
   argv (the stdin-not-argv invariant is unchanged regardless of tier)
 
-### ADDED: Requirement: Sandbox capability tier type
+## ADDED Requirements
+
+### Requirement: Sandbox capability tier type
 
 The system SHALL define an `AccessTier` type in `libs/shared/core/types.go`
 with constants `AccessObserver`, `AccessWorker`, and `AccessIsolated`. The

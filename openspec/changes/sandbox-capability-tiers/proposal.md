@@ -5,7 +5,7 @@ schema: spec-driven
 
 # Sandbox capability tiers — observer, worker, isolated
 
-## What
+## What Changes
 
 Replace the binary offline/online runner distinction with a unified **sandbox
 capability tier** model. Every agent runs in a sandbox with a well-defined
