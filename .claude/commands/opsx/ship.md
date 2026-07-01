@@ -1,92 +1,65 @@
 ---
 name: "OPSX: Ship"
-description: Orchestrate the full ship of an approved OpenSpec change — local merge (no gh) or remote PR — both test-first to an opened PR or locally-merged-and-archived main
+description: Ship an approved OpenSpec change — plan + implement + open a PR (remote) or merge locally
 category: Workflow
-tags: [workflow, automation, pr, tdd, local, experimental]
+tags: [workflow, ship, pr, tdd]
 ---
 
-Carry an **approved** OpenSpec change from spec to **shipped** in one go, by
-orchestrating the two ship workflows: **ship-plan** (write a `.handoff/<change>/`
-grouping the change into a few test-first units) and **ship-code** (execute it
-unit-by-unit — Red→Green→one commit per unit — then verify, review, evidence,
-sync, and either open a PR or merge locally + archive + open PR).
+Implement an OpenSpec change and open its code PR (remote, default) or merge
+directly into the base branch (local). Runs **ship-plan** (group tasks into
+test-first units) then **ship-code** (Red→Green→commit per unit → verify →
+review → evidence → PR/merge).
 
-**Two paths** are offered at the top:
+**One prerequisite:** the spec must be reviewed & merged. Run `/opsx:spec` →
+`/opsx:spec-pr` first if not done.
 
-- **Local merge (no gh, no remote push)** — recommended for solo/AI-driven
-  ships. Branches `feat/<change>` → per-task commits → Local review → squash-
-  merge into `main` → post-merge verify → sync delta specs → archive the change
-  → optional semver tag → cleanup. Defaults to fully local
-  (`noPushMain=true`); opt in to `git push origin main` with `--push-main`.
-- **Remote PR (gh pr create)** — original path. Ends at PR opened; a human
-  merges, then `/opsx:archive` finalizes.
-
-**Input**: Optionally a change name (e.g., `/opsx:ship c0006-…`). `--dry-run`
-on the remote path makes the per-task commits locally but skips push + PR;
-on the local path, refuses merge and stops at Verify (the branch + per-task
-commits are still produced).
+**Input:** Change name (e.g., `/opsx:ship restructure-addon-preview`). Flags:
+- `--local` — merge directly into the base branch (no PR, no gh). Use for solo/trivial changes.
+- `--worktree` — run implementation in an isolated git worktree (main checkout stays clean).
+- `--base <branch>` — base branch (default: `main`).
+- `--dry-run` — commits only; no push, no PR, no merge.
 
 **Steps**
 
-0. **Path selection.** AskUserQuestion:
-   - "Local merge (no gh, no remote push)" — recommended
-   - "Remote PR (gh pr create)" — original flow
+0. **Path.** If `--local` was passed → local merge. Otherwise → remote PR (default).
+   `--worktree` adds worktree isolation to either path.
 
-   **On Local**, AskUserQuestion follow-ups:
-   - Merge strategy: `squash` (default) / `--no-ff` / `ff-only`
-   - Bump: none (default) / patch / minor / major
-   - `noPushMain`: stay fully local (default) / also push `main` to origin
-   - Archive: archive after merge (default) / skip archive
-   - Review: run local review (default) / skip via `--no-review`
+0b. **Base branch.** If `--base` was passed, use it. Otherwise ask once — default `main`.
 
-   **On Remote**, the legacy behavior is preserved unchanged.
+1. **Select change.** Infer from context or `openspec list --json`. Announce:
+   "Shipping `<change>` via `<path>` onto `<base>`" + any flags.
 
-1. **Select the change** (infer from context / `openspec list --json` +
-   AskUserQuestion). Announce "Shipping change: <name> via <path> path".
+2. **Plan.** Launch `Workflow({ name: 'ship-plan', args: { change, date, local: <true|false> } })`.
 
-2. **Plan.** Launch
-   `Workflow({ name: 'ship-plan', args: { change, date, local: <true|false> } })`.
-   `localOnly` flows through to `plan.json` so `ship-code` picks it up.
+3. **Review gate.** Show the handoff breakdown. Ask:
+   - **Ship it** (default)
+   - **Dry run** (commits only on remote; no merge on local)
+   - **Edit handoff first** (stops)
+   - **Cancel**
 
-3. **Review gate.** Show the handoff: the proposal's what/why, the per-pair
-   breakdown, and (for Local) the merge strategy + bump + push + archive
-   decisions. Use **AskUserQuestion**: "Handoff looks right — run ship-code
-   now?" with options *Ship it*, *Dry run (commits, no push/PR on remote;
-   no merge on local)*, *Edit handoff first*, *Cancel*.
+4. **Execute.** Launch `Workflow({ name: 'ship-code', args: { change, date, dryRun, local, worktree, base } })`.
 
-4. **Execute.** Launch
-   `Workflow({ name: 'ship-code', args: { change, date, dryRun,
-     local: <true|false>, base: 'main', mergeStrategy, bump,
-     noPushMain, archive, skipReview } })`.
+   **Remote path:** Branch from freshened base (`git fetch; merge --ff-only origin/<base>`) →
+   per-unit commits → verify → agent review → evidence → reconcile delta specs →
+   changelog → push + `gh pr create` with review findings + spec PR link. **Stops at PR opened.**
 
-   **Remote path** branches → runs each pair Red→Green→one commit → verify →
-   evidence → sync → changelog → push + `gh pr create`.
+   **Local path:** Branch → per-unit commits → verify → review (code + security) →
+   evidence → `git merge --squash feat/<change>` into base → post-merge verify →
+   sync delta specs → archive change → optional tag → cleanup branch. No gh.
 
-   **Local path** branches → runs each pair Red→Green→one commit → verify →
-   Local review (code-review-and-quality + security-and-hardening, gated on
-   `--no-review`) → pre-merge evidence → `git switch main && git merge --<strategy>
-   feat/<change>` (conventional commit, signed off, never `git add -A`,
-   never auto-resolves conflicts) → re-runs verify on `main` post-merge →
-   sync delta specs → archives `openspec/changes/<change>/` →
-   `openspec/changes/archive/<date>-<change>/` → optional semver tag →
-   chore commit (evidence + sync + archive + changelog + post-merge.md) →
-   `git branch -D feat/<change>` → optional `git push origin main` (when
-   `--push-main`).
+   **`--worktree` on either path:** implementation runs in an isolated git worktree.
+   Remote-worktree stops after implementation (no push/PR — run `/opsx:ship-pr`).
+   Local-worktree auto-merges from worktree then cleans up.
 
-5. **Relay the result.**
+5. **Result.**
 
-   **Remote**: branch, per-task commits, gates + coverage, evidence dir, PR URL.
-   Remind the user that **archive happens after merge** (`/opsx:archive`).
+   **Remote:** PR URL, branch, per-unit commits, gates + coverage, review verdict.
+   Remind: human reviews & merges; `/opsx:address-review` for feedback; archive after merge.
 
-   **Local**: mergeSha + baseSha, pre-merge gates + coverage, review verdict +
-   findings, post-merge gates + coverage, sync state, archive path, tag (if
-   any), choreSha, pushed status, evidence dir (and the new
-   `evidence/post-merge.md` inside it).
+   **Local:** merge SHA, gates + coverage, review findings, archive path.
 
 **Guardrails**
-- Never run ship-code without the review gate in step 3.
-- Test-first by default; doc-only changes auto-skip Red per pair (recorded, never
-  silent).
-- The local path **never** calls `gh`. The remote path **always** ends at PR
-  opened — never merges.
-- Pass `dryRun` whenever testing the pipeline.
+- Never skip the review gate (step 3).
+- Test-first by default; doc-only units set `skipRed` explicitly.
+- `--dry-run` on remote: commits only, no push/PR.
+- `--dry-run` on local: stops at verify, no merge.

@@ -4,11 +4,13 @@ The engineering-practice skills in this directory are **adapted from**
 [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) (MIT License),
 a library of production-grade engineering skills for AI coding agents.
 
-Each vendored skill keeps the upstream methodology and structure, localized to this
-repository's stack and conventions (Go 1.25.x, OpenSpec `/opsx:*` lifecycle, `make`
-targets, the job-queue/provider-gateway invariants, evidence under
-`openspec/changes/<name>/evidence/`). See [docs/engineering-skills.md](../../docs/engineering-skills.md)
-for the lifecycle map and how the skills compose.
+Each skill keeps the upstream methodology and structure, generalized for use with
+the mzspec OpenSpec ship pipeline (the `/opsx:*` spec-first two-PR lifecycle,
+resolver-selected gates, and evidence under `openspec/changes/<name>/evidence/`).
+Project-specific details (toolchains, hard-invariants) are read from the consuming
+repo's `mzspec.config.json` rather than hardcoded; where a skill shows concrete
+examples (e.g. `security-and-hardening`), those are the MeKnow reference set and
+should be swapped for your project's invariants.
 
 ## Vendored from upstream (adapted)
 

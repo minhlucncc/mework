@@ -60,6 +60,20 @@ function findArchive() {
   )
 }
 
+function findSpecFiles(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  const files = []
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...findSpecFiles(fullPath))
+    } else if (entry.name.endsWith('.md')) {
+      files.push(fullPath)
+    }
+  }
+  return files
+}
+
 function changeInfo(name) {
   const dir = changeDir(name)
   if (!fs.existsSync(dir)) return null
@@ -69,7 +83,7 @@ function changeInfo(name) {
   const tasksPath = path.join(dir, 'tasks.md')
   const specsDir = path.join(dir, 'specs')
   const specFiles = fs.existsSync(specsDir)
-    ? fs.readdirSync(specsDir).filter(f => f.endsWith('.md')).map(f => `specs/${f}`)
+    ? findSpecFiles(specsDir).map(f => path.relative(dir, f))
     : []
   let title = name
   if (fs.existsSync(proposalPath)) {

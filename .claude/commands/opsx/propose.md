@@ -1,121 +1,45 @@
 ---
 name: "OPSX: Propose"
-description: Propose a new change - create it and generate all artifacts in one step
+description: Scaffold a new OpenSpec change from a free-text prompt — compute the next cNNNN-<slug>, create the change, and seed proposal.md. The github-agnostic front door to the pipeline.
 category: Workflow
-tags: [workflow, artifacts, experimental]
+tags: [workflow, openspec, propose, scaffold]
 ---
 
-Propose a new change - create the change and generate all artifacts in one step.
+Start a new change from a description of what to build. `/opsx:propose`
+**only scaffolds** — it computes the next `cNNNN-<slug>`, runs `openspec new change`,
+and drafts `proposal.md` grounded in your prompt. It does not review, validate, or
+touch any task source; that separation is deliberate.
 
-I'll create a change with artifacts:
-- proposal.md (what & why)
-- design.md (how)
-- tasks.md (implementation steps)
+Flow: `/opsx:propose <what>` → `/opsx:spec` → `/opsx:spec-pr` → `/opsx:ship-*`.
 
-When ready to implement, run /opsx:apply
+**The prompt can be either**:
+- **Inline text** — a free-text description of the change
+- **A file pointer** — "read the task from `<path>`" where an adapter has written
+  the task content to a local file
 
----
+> To start from a GitHub issue and link it, use the **task-github** extension:
+> `/opsx:propose-gh <issue>` instead.
 
-**Input**: The argument after `/opsx:propose` is the change name (kebab-case), OR a description of what the user wants to build.
+**Options**
+- `--slug <kebab>` — pin the kebab slug (otherwise derived from the prompt)
+- `--worktree` — create a **persistent spec worktree** (`../<project>-spec-<cNNNN-<slug>/`)
+  on a `spec/<cNNNN-<slug>` branch off `main`. All scaffolding happens inside the
+  worktree, so the main checkout stays on the base branch and multiple specs can be
+  worked on simultaneously.
+- `--base <branch>` — base branch for the spec worktree (default: main)
 
 **Steps**
 
-1. **If no input provided, ask what they want to build**
-
-   Use the **AskUserQuestion tool** (open-ended, no preset options) to ask:
-   > "What change do you want to work on? Describe what you want to build or fix."
-
-   From their description, derive a kebab-case slug (e.g., "add user authentication" → `add-user-auth`).
-
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
-
-2. **Determine the order-prefix and create the change directory**
-
-   This project names every change directory `cNNNN-<kebab-slug>`, where `NNNN` is a
-   4-digit, zero-padded sequence number encoding apply/dependency order (e.g.
-   `c0002-repo-restructure`, `c0002-message-bus`). The leading `c` is required:
-   OpenSpec rejects change names that start with a digit (`openspec new change`,
-   `status --change`, and `instructions --change` all enforce a leading letter).
-   Compute the next number:
-   ```bash
-   ls -1d openspec/changes/c[0-9]* 2>/dev/null | sed -E 's#.*/c([0-9]+)-.*#\1#' | sort -n | tail -1
+1. **Confirm scope.** Restate the change in one line and the `cNNNN-<slug>` it will create.
+2. **Launch the Workflow** (date from context):
    ```
-   The next number is that value + 1 (start at `c0001` if none exist). If this change
-   must run **before** existing ones, pick an earlier free number and renumber later
-   ones as needed. Then create it with the prefixed name:
-   ```bash
-   openspec new change "cNNNN-<slug>"
+   Workflow({ name: 'propose', args: { prompt: '<what>', slug: '<slug|undefined>', date: '<YYYY-MM-DD>', worktree: true|false } })
    ```
-   This creates a scaffolded change in the planning home resolved by the CLI with `.openspec.yaml`.
-   Use the full `cNNNN-<slug>` as `<name>` in every subsequent command below.
-
-3. **Get the artifact build order**
-   ```bash
-   openspec status --change "<name>" --json
-   ```
-   Parse the JSON to get:
-   - `applyRequires`: array of artifact IDs needed before implementation (e.g., `["tasks"]`)
-   - `artifacts`: list of all artifacts with their status and dependencies
-   - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths.
-
-4. **Create artifacts in sequence until apply-ready**
-
-   Use the **TodoWrite tool** to track progress through the artifacts.
-
-   Loop through artifacts in dependency order (artifacts with no pending dependencies first):
-
-   a. **For each artifact that is `ready` (dependencies satisfied)**:
-      - Get instructions:
-        ```bash
-        openspec instructions <artifact-id> --change "<name>" --json
-        ```
-      - The instructions JSON includes:
-        - `context`: Project background (constraints for you - do NOT include in output)
-        - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
-        - `template`: The structure to use for your output file
-        - `instruction`: Schema-specific guidance for this artifact type
-        - `resolvedOutputPath`: Resolved path or pattern to write the artifact
-        - `dependencies`: Completed artifacts to read for context
-      - Read any completed dependency files for context
-      - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
-      - Apply `context` and `rules` as constraints - but do NOT copy them into the file
-      - Show brief progress: "Created <artifact-id>"
-
-   b. **Continue until all `applyRequires` artifacts are complete**
-      - After creating each artifact, re-run `openspec status --change "<name>" --json`
-      - Check if every artifact ID in `applyRequires` has `status: "done"` in the artifacts array
-      - Stop when all `applyRequires` artifacts are done
-
-   c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
-      - Then continue with creation
-
-5. **Show final status**
-   ```bash
-   openspec status --change "<name>"
-   ```
-
-**Output**
-
-After completing all artifacts, summarize:
-- Change name and location
-- List of artifacts created with brief descriptions
-- What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run `/opsx:apply` to start implementing."
-
-**Artifact Creation Guidelines**
-
-- Follow the `instruction` field from `openspec instructions` for each artifact type
-- The schema defines what each artifact should contain - follow it
-- Read dependency artifacts for context before creating new ones
-- Use `template` as the structure for your output file - fill in its sections
-- **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
-  - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
-  - These guide what you write, but should never appear in the output
+   With `--worktree`, it adds a **Worktree** phase before **Scaffold**: creates the git
+   worktree, scaffolds the change inside it, then returns the worktree path.
+3. **Relay the result.** Report the created `change`, `proposalPath`, and next step.
 
 **Guardrails**
-- Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
-- Always read dependency artifacts before creating a new one
-- If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
-- If a change with that name already exists, ask if user wants to continue it or create a new one
-- Verify each artifact file exists after writing before proceeding to next
+- Faithful seeding only: `proposal.md` must reflect the prompt; do not invent scope.
+- Do not review or validate here — that is `/opsx:spec`'s job.
+- One change per concern — prefer splitting an over-broad request over packing it.

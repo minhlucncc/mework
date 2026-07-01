@@ -1,15 +1,22 @@
 ---
 name: ui-design
-description: Guides the AI through UI/visual design for user-facing OpenSpec changes. Covers wireframes, component trees, UI states, user flows, visual decisions, responsive/accessible design, and connecting UI design to implementation tasks. Use when a change has a visible surface (new screens, component changes, UX improvements) and you need to produce ui.md.
+description: Guides the AI through UX pattern-driven UI design for user-facing OpenSpec changes. Produces ui.md as a formal design handoff — anchored to the project's existing UX patterns, abstract business flows, and visual concepts. Use when a change has a visible surface (new screens, component changes, UX improvements).
+tags: [ui, frontend]
 ---
 
 # UI Design
 
 ## Overview
 
-UI design lives in `openspec/changes/<cNNNN-slug>/ui.md` — a sibling of `design.md` (architecture/logic) and `tasks.md`. While `design.md` captures architecture decisions, dependency graphs, and technical risks, `ui.md` captures the visual and interaction design: wireframes, component hierarchy, UI states (loading/empty/error/populated/edge cases), user flows, visual decisions, responsive behavior, and accessibility.
+UI design lives in `openspec/changes/<cNNNN-slug>/ui.md` — a sibling of `design.md` (architecture/logic) and `tasks.md`. But `ui.md` is not a first draft — it is a **formal design handoff document**. It captures:
 
-A good `ui.md` makes implementation tasks concrete: each UI state becomes an acceptance criterion, each component maps to a task file, and the wireframes give the implementer an unambiguous target.
+- Which **UX patterns** from the project this design follows (or intentionally diverges from)
+- The **abstract business flow** — the user's conceptual journey, independent of screens
+- **Wireframes, component tree, and UI states** — the concrete visual design
+- How the design embodies the project's **visual concepts** (character, tone, density)
+- A **design handoff checklist** — confirmed done before implementation begins
+
+A good `ui.md` makes implementation tasks concrete: each UI state becomes an acceptance criterion, each component maps to a task file, and the wireframes give the implementer an unambiguous target — all while being consistent with the project's existing UX language.
 
 ## When to Use
 
@@ -21,21 +28,95 @@ A good `ui.md` makes implementation tasks concrete: each UI state becomes an acc
 
 **When NOT to use:** Purely backend/data-layer changes, spec-only changes, infrastructure work, CLI-only changes. If the change has no visible surface, state "no UI surface — ui.md not created" in the propose output.
 
+## Before You Start: Every Project Is Different
+
+Each project has its own tech stack, its own design conventions, and its own way of documenting design. Some have a `DESIGN.md`, some have design skills, some have nothing but the code itself. **Your first job is to find what already exists.**
+
+The `ux-pattern-audit` skill (`core/skills/ux-pattern-audit/SKILL.md`) can be run separately to produce a `openspec/patterns/ux-patterns.md` — but it's not required. If it exists, read it. If it doesn't, you'll discover the patterns as part of the design process below.
+
 ## The Design Process
 
-### Step 1: Explore Existing Patterns
+### Step 1: Discover the Project's Design Language
 
-Before proposing any UI, explore the codebase to understand what already exists:
+Before proposing any UI, find and read what the project already says about its design. Every project is different — adapt to what you find.
 
-1. **Read the frontend package** — e.g., `apps/portal/src/`, `apps/web/src/` — to understand component naming conventions, file organization, and pattern libraries
-2. **Check for design tokens** — `theme.ts`, `tokens.css`, `tailwind.config.*`, design system files in `components/ui/` or `lib/`
-3. **Study existing components** — look for patterns: how do they handle error states? Loading states? Empty states? Form validation? What's the import style?
-4. **Check capability specs** — read `openspec/specs/<capability>/spec.md` to understand the intended behavior the UI must support
-5. **Note the tech stack** — React/Vue/Svelte? Tailwind/CSS Modules/Styled Components/vanilla CSS? Responsive or mobile-first? shadcn/ui, Radix, MUI, or custom?
+1. **Scan for existing design documentation:**
+   - `DESIGN.md` or `DESIGN_SYSTEM.md` at the project root
+   - `docs/design/` directory or `docs/design.md`
+   - `.claude/skills/*/SKILL.md` files that reference design, UI, or UX
+   - `STYLE_GUIDE.md`, `BRAND.md`, or similar
+   - `openspec/patterns/ux-patterns.md` (the UX pattern reference, if it exists)
+   - The project's `CLAUDE.md` for any design notes or invariants
 
-Document findings as "Existing patterns observed:" in `ui.md` so the implementer knows what conventions to follow.
+2. **Read the relevant capability specs** — `openspec/specs/<capability>/spec.md` — to understand the intended behavior the UI must support.
 
-### Step 2: Create Wireframes / ASCII Art
+3. **Read the frontend codebase** — browse the primary UI package to understand naming conventions, file organization, and how existing screens are structured.
+
+4. **Document what you found** in the `ui.md` "Design Language Reference" section: what design docs exist, what patterns you observed, what the design language is. This anchors everything that follows.
+
+> **If `openspec/patterns/ux-patterns.md` does not exist and this is the first UI design for the project**, consider running the `ux-pattern-audit` skill to create it. This is especially valuable for larger projects. For a small one-off change, you can document patterns inline in the `ui.md`.
+
+### Step 2: Catalog UX Patterns
+
+Identify which of the project's UX patterns apply to this change — and which don't. This is not about components or CSS; it's about **abstract patterns** for how the project handles common UX situations.
+
+For each relevant pattern category, note how the existing approach applies (or doesn't) to your design:
+
+- **Navigation** — Where does this screen live in the nav hierarchy? Does it use the project's standard nav pattern or need something new?
+- **Data display** — Does your design use the project's standard card/table/list pattern? Or introduce a new data display?
+- **Forms & input** — Does your change involve forms? Follow the project's established form pattern (layout, validation, submission)?
+- **Feedback & notifications** — How does your design surface errors, success states, and confirmations? Use the project's existing feedback patterns?
+- **Loading states** — Apply the project's established loading pattern (skeleton vs spinner) to each data-dependent region?
+- **Empty states** — Follow the project's empty state convention? Or needs something new?
+- **Confirmations** — Any destructive actions? Follow the project's confirmation pattern?
+- **Search & browse** — Does your change involve searching or browsing? Use the existing pattern?
+- **Modals / panels / pages** — If your design uses overlays or secondary views, which pattern does it follow (modal, slide-in panel, drill-down page)?
+
+Document the pattern usage in a table:
+
+```
+| Pattern | Project Standard | Used in This Design | Notes |
+|---------|-----------------|-------------------|-------|
+| Navigation | sidebar + breadcrumbs | Yes — standard | — |
+| Data display | card grid + slide-in detail | Card grid: yes. Slide-in: replaced with inline panel for performance |
+| Forms | single-page, inline validation | Yes — standard form | — |
+| Notifications | toast (top-right, auto-dismiss) | Yes — standard | — |
+```
+
+### Step 3: Map the Abstract Business Flow
+
+Before drawing wireframes, define the **conceptual user journey** — what the user is trying to accomplish, independent of which screens or components are involved.
+
+Map it as:
+
+```
+Goal: [what the user wants to accomplish]
+Entry point: [how does the user start this journey?]
+Flow steps:
+  1. [conceptual step 1 — not a screen, a milestone]
+  2. [conceptual step 2]
+  3. [conceptual step 3]
+Completion: [what "done" looks like]
+What's next: [where does the user go after?]
+
+Branch paths:
+  Happy path: [step 1 → 2 → 3 → done]
+  Empty: [what happens if there's nothing to act on?]
+  Error: [what happens if something fails?]
+  Edge cases: [timeouts, stale data, rapid actions, permissions]
+```
+
+This flow should make sense to a product manager or stakeholder without seeing any screens. It's the **business logic of the UX** — not the implementation.
+
+**Example — don't write:**
+> User clicks "New Order" button → form page loads → user fills fields → clicks Submit → table updates
+
+**Instead write:**
+> Merchant wants to create a rush order for a VIP customer who needs delivery by tomorrow. They start from the Orders dashboard, initiate a new order, select the customer and items, set rush priority, review the total, and confirm. The order appears in the active orders queue with a "rush" badge.
+
+The second version captures the *concept* — wireframes can then realize it, but the flow survives regardless of implementation.
+
+### Step 4: Create Wireframes / ASCII Art
 
 Use ASCII art in fenced code blocks. Keep diagrams 72–80 characters wide. Each screen or significant state gets its own diagram.
 
@@ -69,7 +150,7 @@ Use the following conventions:
 - `+--...--+` for bordered containers
 - `|` for vertical edges
 
-### Step 3: Document Component Tree
+### Step 5: Document Component Tree
 
 Show the hierarchy of UI components using indentation. Annotate each leaf component with its possible states in brackets.
 
@@ -100,7 +181,9 @@ SearchPage
 
 Mark repeated elements with `[]` (e.g., `ResultCard[]`).
 
-### Step 4: Enumerate UI States
+Annotate which components are **existing patterns** available in the project vs **new** — this helps the implementer know what to build vs what to import.
+
+### Step 6: Enumerate UI States
 
 For each interactive component, enumerate all relevant states:
 
@@ -115,60 +198,61 @@ For each interactive component, enumerate all relevant states:
 | **Hovered** | Hover state for clickable elements |
 | **Edge cases** | Long text truncation, rapid clicks, slow network, expired session, permissions denied, zero results |
 
-### Step 5: Design User Flows
+Use the project's UX patterns for how these states are rendered (from Step 2): loading skeleton style, empty state format, error display pattern, etc.
 
-Write step-by-step flows for key scenarios. Cover the happy path, then branch for empty, error, and edge cases.
+### Step 7: Design User Flows (Anchored to Business Flow)
+
+Write step-by-step flows for key scenarios, anchored to the **abstract business flow** from Step 3. This is where the conceptual flow meets actual UI.
 
 ```
-## Flow: Search and view a result
+## Flow: [matches Step 3's flow name]
 
-**Happy path:**
-1. User lands on SearchPage
-2. User types query in SearchInput (state: filled)
-3. User clicks SearchButton (state: loading)
-4. ResultList shows LoadingSpinner while fetching
-5. Results arrive: ResultList populates with ResultCard[] items
-6. User clicks "View" on a ResultCard → navigates to detail view
+**Happy path (following abstract flow):**
+1. [UI event] → [state change, referencing business flow milestone]
+2. [UI event] → [state change]
 
 **Empty:**
-- Search returns no results → ResultList shows EmptyState with "No results" message + suggestion to broaden query
+- [what the user sees when business flow has no data]
 
 **Error:**
-- Network failure → ResultList shows ErrorState with error description + RetryButton
-- User clicks Retry → re-fetch, back to Loading → Populated or Error again
+- [what the user sees and can do when something fails]
 
 **Edge cases:**
-- 1000+ results → paginated; PageLinks show page 1 of N
-- Very long query text → SearchInput truncates with ellipsis
-- Rapid successive searches → debounce or cancel previous request
+- [specific edge cases with expected UI behavior]
 ```
 
-### Step 6: Record Visual Decisions
+### Step 8: Visual Concept Alignment
 
-Record decisions that deviate from project defaults. If the project has a design system / theme tokens, reference the tokens rather than inventing new values.
+Explain how this design embodies the project's visual concepts. Reference the design character, information density, tone, and visual language discovered in Step 1.
 
-- Color choices for new accent states (reference theme tokens where possible)
-- Typography: heading vs body sizes, font weights
-- Spacing: padding, margin, gap values (use the project's spacing scale)
-- Border-radius: sharp, rounded, or pill shapes
-- Icons: which icon set, specific icon names
-- Animation: transitions, hover effects, loading animation styles
-- Shadows: card elevation, modal backdrop
+- **Character alignment** — "This design continues the project's professional/trustworthy character through clean layout and restrained color use."
+- **Density** — "Follows the project's balanced approach: spacious around primary actions, denser in data-display regions."
+- **Tone** — "Error messages use the project's direct, helpful tone — no blaming the user."
+- **Visual language** — "Uses the established accent-color-on-neutral-base palette. New feature uses the existing icon set."
 
-### Step 7: Responsive + Accessibility
+If the design intentionally diverges from an established concept, justify it:
+- "Diverging from the typical spacious layout here because this power-user screen prioritizes data density — similar to how the project's dashboard already does."
 
-**Responsive behavior:**
-- Breakpoints: at what widths does the layout change?
-- Collapsing: which sections stack, hide, or become toggles on mobile?
-- Navigation: hamburger menu vs sidebar vs top nav at each breakpoint
-- Tables/grids: horizontal scroll, card layout on small screens, column reordering
+### Step 9: Design Handoff Checklist
 
-**Accessibility:**
-- Keyboard navigation: tab order, focus indicators, escape-to-close modals, arrow-key navigation in lists
-- ARIA: roles (`navigation`, `main`, `dialog`, `alert`), labels (`aria-label`, `aria-labelledby`), live regions (`aria-live="polite"` for dynamic content)
-- Focus management: where focus lands when a modal opens/closes, when a page navigates
-- Color contrast: verify against WCAG AA (4.5:1 for normal text, 3:1 for large text)
-- Screen reader flow: linear reading order, skip-to-content link, heading hierarchy
+Before the design is handed to implementation (i.e., before `ship-plan` reads `ui.md`), confirm:
+
+- [ ] Existing design docs were discovered and referenced (DESIGN.md, skills, patterns)
+- [ ] UX patterns from the project are cataloged and applied (or divergence is justified)
+- [ ] Abstract business flow is mapped — entry → steps → completion → next
+- [ ] Wireframes cover all key screens and their significant states
+- [ ] Component tree documents the full hierarchy with state annotations
+- [ ] Existing vs new components are annotated
+- [ ] UI states table is complete (loading / empty / error / populated / edge cases)
+- [ ] User flows are anchored to the abstract business flow
+- [ ] Visual concepts are referenced — character, density, tone, language
+- [ ] Any divergence from established concepts is justified
+- [ ] Responsive breakpoints are stated
+- [ ] Accessibility considerations are noted (keyboard, ARIA, contrast)
+- [ ] Implementation tasks in `tasks.md` map to `ui.md` sections
+- [ ] The human has reviewed and approved the UI design before implementation begins
+
+This checklist **must be complete** before the design is handed off.
 
 ## Template: ui.md
 
@@ -179,18 +263,46 @@ Record decisions that deviate from project defaults. If the project has a design
 [One paragraph — what user-facing capability this delivers, which screens or
 components it affects, who the primary user is.]
 
-## Existing Patterns Observed
-[Optional — what conventions, components, and design tokens were found in the
-codebase that this design builds on or diverges from.]
+## Design Language Reference
+[REQUIRED — what design documentation exists (DESIGN.md, design skill,
+ux-patterns.md) and what key design language elements were found. E.g.,
+"Design.md defines the primary/interactive color palette and heading hierarchy.
+Existing apps use card-based layouts with slide-in detail panels."]
+
+## UX Patterns Used
+[Which established project UX patterns this design follows, with a table
+mapping each pattern category to its usage in this design. Note any
+intentional deviations and why.]
+
+| Pattern | Project Standard | Used? | Notes |
+|---------|-----------------|-------|-------|
+| Navigation | sidebar + breadcrumbs | Yes | — |
+| Data display | cards + slide-in detail | Partial | Using cards but inline panel instead of slide-in for perf reasons |
+| Forms | single-page, inline validation | Yes | — |
+| ... | ... | ... | ... |
+
+## Abstract Business Flow
+[The conceptual user journey — independent of screens and implementation.
+Entry point → flow steps → completion → what's next. Plus branch paths
+for happy, empty, error, and edge cases.]
+
+```
+Goal: [what the user wants to accomplish]
+Entry: [how the user starts]
+Steps:
+  1. ...
+  2. ...
+  3. ...
+Done: [what completion looks like]
+Next: [where the user goes after]
+```
 
 ## Wireframes / Layout
 [ASCII-art diagram(s) of each screen or major component state.]
 
 ## Component Tree
-[Indented hierarchy of components with state annotations.]
-
-## User Flows
-[Step-by-step walkthroughs: happy path, empty, error, edge cases.]
+[Indented hierarchy of components with state annotations. Tag each component
+as [existing pattern] or [new].]
 
 ## UI States
 | Component | Loading | Empty | Error | Populated | Edge Cases |
@@ -198,14 +310,31 @@ codebase that this design builds on or diverges from.]
 | SearchInput | skeleton | — | — | filled | long query |
 | ResultList | spinner | no-results msg | error+retry | cards | 1000+ results |
 
-## Visual Decisions
-[List any visual choices that deviate from project defaults.]
+## User Flows
+[Step-by-step walkthroughs anchored to the abstract business flow above.
+Cover happy path, empty, error, and edge cases.]
+
+## Visual Concept Alignment
+[How this design embodies the project's visual concepts: character,
+information density, tone, visual language. Any divergence is explicitly
+justified.]
 
 ## Responsive Behavior
-[Breakpoints, layout changes, mobile navigation pattern.]
+[Breakpoints, layout changes, mobile navigation pattern. Reference the
+project's established responsive patterns where applicable.]
 
 ## Accessibility Considerations
 [Keyboard nav, ARIA, focus management, contrast, screen reader flow.]
+
+## Design Handoff Checklist
+- [ ] Design language referenced
+- [ ] UX patterns cataloged and applied
+- [ ] Abstract business flow mapped
+- [ ] All UI states enumerated
+- [ ] Visual concepts aligned
+- [ ] Responsive behavior stated
+- [ ] Accessibility covered
+- [ ] Divergences from existing patterns justified
 
 ## Open UI Questions
 [Anything needing human input before implementation.]
@@ -213,7 +342,7 @@ codebase that this design builds on or diverges from.]
 
 ## Connecting to Implementation Tasks
 
-UI design flows into implementation tasks in `tasks.md`. Each unit of work should reference `ui.md` sections:
+UI design flows into implementation tasks in `tasks.md`. Each unit of work should reference `ui.md` sections and the project's UX patterns:
 
 ```markdown
 ## Task [3]: SearchResultList with all states (toolchain: ts)
@@ -221,27 +350,34 @@ UI design flows into implementation tasks in `tasks.md`. Each unit of work shoul
 **Description:** Build the SearchResultList component with loading skeleton,
 empty-state message, error state with retry, and populated card list.
 Follow ui.md → Component Tree for the hierarchy and ui.md → UI States for
-the behavior of each state.
+the behavior of each state. Use the project's established loading state
+pattern (skeleton) and empty state pattern (illustration + message + CTA).
 
 **Acceptance criteria:**
-- [ ] Loading: shimmer/skeleton renders while data is being fetched
-- [ ] Empty: "No results found" message with suggestion text
-- [ ] Error: error message + RetryButton on fetch failure
+- [ ] Loading: skeleton renders while data is being fetched (per project pattern)
+- [ ] Empty: "No results found" message with suggestion (per project empty state pattern)
+- [ ] Error: error message + RetryButton on fetch failure (per project error pattern)
 - [ ] Populated: renders ResultCard for each result item
 - [ ] Edge: handles 0, 1, and 1000+ results without layout breakage
 - [ ] 1000+ results correctly paginated per ui.md → User Flows
+- [ ] Responsive: layout adapts at breakpoints specified in ui.md
+- [ ] Accessibility: keyboard navigation + ARIA labels per ui.md
 ```
 
 ## Verification
 
 Before concluding UI design, confirm:
 
+- [ ] Design language reference populated with what was found in the project
+- [ ] UX patterns table documents reuse and deviations
+- [ ] Abstract business flow is mapped (not just page-level navigation)
 - [ ] Wireframes cover all key screens and their significant states
-- [ ] Component tree documents the full hierarchy with state annotations
+- [ ] Component tree documents the full hierarchy with state annotations, tagged existing vs new
 - [ ] User flows cover happy path, empty, error, and at least one edge case
 - [ ] UI states table is complete (loading / empty / error / populated / edge cases)
+- [ ] Visual concept alignment is documented
 - [ ] Responsive breakpoints are stated
 - [ ] Accessibility considerations are noted (keyboard, ARIA, contrast)
-- [ ] Visual decisions reference the existing design system where applicable
-- [ ] Implementation tasks in `tasks.md` map to `ui.md` sections
+- [ ] Design handoff checklist is complete
+- [ ] Implementation tasks in `tasks.md` map to `ui.md` sections and reference UX patterns
 - [ ] The human has reviewed and approved the UI design before implementation begins
