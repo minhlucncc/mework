@@ -27,11 +27,23 @@ Examples:
   mework init --workspace . --name mybot
   mework init --workspace ./my-project --agent claude
 `,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		dir := initWorkspace
-		if dir == "" {
-			dir = "."
-		}
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if initWorkspace == "" {
+					return fmt.Errorf("--workspace is required")
+				}
+				if initAgent == "" {
+					return fmt.Errorf("--agent is required (e.g. --agent claude)")
+				}
+				if initName == "" {
+					return fmt.Errorf("--name is required (e.g. --name mybot)")
+				}
+			if initWorkspace == "" {
+				return fmt.Errorf("--workspace is required")
+			}
+			if initAgent == "" {
+				return fmt.Errorf("--agent is required (e.g. --agent claude)")
+			}
+			dir := initWorkspace
 		absDir, err := filepath.Abs(dir)
 		if err != nil {
 			return fmt.Errorf("resolve path: %w", err)
@@ -173,7 +185,7 @@ func copyWorkspaceTemplate(src, dst, mcpBin string) error {
 
 func init() {
 	initCmd.Flags().StringVar(&initWorkspace, "workspace", "", "Target directory (default: current dir)")
-	initCmd.Flags().StringVar(&initAgent, "agent", "claude", "AI agent (claude, codex, etc.)")
-	initCmd.Flags().StringVar(&initName, "name", "", "Agent name for mework agent send (default: orchestrator)")
+	initCmd.Flags().StringVar(&initAgent, "agent", "", "AI agent (claude, codex, etc.)")
+	initCmd.Flags().StringVar(&initName, "name", "", "Agent name for mework agent send (required)")
 	initCmd.Flags().StringVar(&initBackend, "backend", "claude", "AI backend (claude, codex, etc.)")
 }
