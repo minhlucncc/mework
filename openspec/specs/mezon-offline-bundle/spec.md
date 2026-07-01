@@ -1,6 +1,14 @@
-# ADDED mezon-offline-bundle
+# Mezon Offline Bundle Specification
 
-## ADDED Requirements
+## Purpose
+
+This capability defines the **offline-stack mode** for `mework` when running
+under a Mezon-bot workload. In offline mode the daemon orchestrates a local
+3-process stack (server + worker + daemon) on the user's machine, with no
+Postgres, no Docker, and no external services. The existing pure-CLI offline
+mode (no server) is preserved unchanged.
+
+## Requirements
 
 ### Requirement: Offline server is booted by the daemon
 

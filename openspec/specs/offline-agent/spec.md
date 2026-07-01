@@ -76,7 +76,7 @@ agent SHALL use the `engine` field to select the sandbox runtime and the
 - **THEN** the system prints an error: `offline mode supports only 'local' engine`
 - **THEN** the system exits with a non-zero exit code
 
-### Requirement: Offline mode requires zero external infrastructure  *(modified)*
+### Requirement: Offline mode requires zero external infrastructure
 
 The offline-mode agent SHALL NOT depend on Postgres, a hub server, a provider
 adapter, or any network-accessible service. All state SHALL be in-memory or on

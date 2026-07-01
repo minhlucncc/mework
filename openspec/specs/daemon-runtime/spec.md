@@ -77,7 +77,7 @@ per-profile pid, log, and work directories so multiple profiles can run isolated
 - **WHEN** a user runs `mework daemon status`
 - **THEN** the system reports whether the daemon is running and its health for the active profile
 
-### Requirement: Offline-stack spawn orchestration  *(added)*
+### Requirement: Offline-stack spawn orchestration
 
 When `daemon start` is invoked with `--offline`, the system SHALL additionally
 accept:
@@ -100,7 +100,7 @@ accept:
 - **WHEN** `mework daemon start --offline --workspace <dir>` is invoked
 - **THEN** the daemon starts an in-process session, registers a Unix socket for `mework agent send`, and no server or worker is spawned
 
-### Requirement: Offline-stack teardown is reverse-order with SIGKILL escalation  *(added)*
+### Requirement: Offline-stack teardown is reverse-order with SIGKILL escalation
 
 The daemon SHALL conform to the **offline-stack child lifecycle contract** as
 defined in the `mezon-offline-bundle` capability (reverse-spawn-order

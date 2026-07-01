@@ -1,6 +1,14 @@
-# ADDED sqlite-backend
+# SQLite Backend Specification
 
-## ADDED Requirements
+## Purpose
+
+This capability defines the SQLite storage backend used by `mework-server`
+when configured with a SQLite `DATABASE_URL`. The backend is **offline-only**:
+it is intended for the offline-stack mode and for single-user workstation
+deployments where a Postgres instance is unavailable. Production deployments
+SHOULD continue to use Postgres.
+
+## Requirements
 
 ### Requirement: SQLite persists the job queue and platform tables
 
