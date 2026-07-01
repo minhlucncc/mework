@@ -26,15 +26,6 @@ curl -fsSL https://raw.githubusercontent.com/minhlucncc/mework/main/install.sh |
 Installs `mework`, `mework-server`, `mework-mezon-worker`, and `mework-mcp`
 to `/usr/local/bin` (or `~/.local/bin`).
 
-### From source
-
-```bash
-git clone https://github.com/minhlucncc/mework.git
-cd mework && make build    # → bin/mework, bin/mework-server, bin/mework-mezon-worker, bin/mework-mcp
-```
-
-Requires **Go 1.26**. For server mode, also need **PostgreSQL** (`make test-db`).
-
 ## Quick start: Offline with Mezon
 
 **Prerequisites:** [Claude Code](https://claude.ai) (`claude` in PATH)
@@ -152,6 +143,17 @@ Shipped changes live in `openspec/changes/archive/`. Details:
 [docs/openspec-workflow.md](docs/openspec-workflow.md).
 
 ## Development
+
+### From source
+
+Requires **Go 1.26**. For server mode, also need **PostgreSQL** (`make test-db`).
+
+```bash
+git clone https://github.com/minhlucncc/mework.git
+cd mework && make build    # → bin/mework, bin/mework-server, bin/mework-mezon-worker, bin/mework-mcp
+```
+
+### Commands
 
 ```bash
 make build    # all binaries
