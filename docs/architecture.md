@@ -8,8 +8,12 @@
 > restructure, install-once runner enrollment, SSE-pushed dispatch, the agent catalog +
 > grants, interactive sessions, and workspace-bound sandboxes (`local`/`docker` engines) all
 > ship. The **legacy poll/queue pipeline** (webhook → job → claim → write-back) also ships and
-> is the **default** webhook path. Remaining stubs: artifact store, NATS bus, GitHub/Jira
-> providers, the standalone `mework-sandbox` binary, and cloudflare/custom engines.
+> is the **default** webhook path. The **Mezon offline stack** (`mework daemon start
+> --offline --with-mezon`) `[Implemented — c0047]` supervises a SQLite-backed
+> `mework-server` + `mework-mezon-worker` end to end so a single command is all
+> that's needed to chat with the bot from Mezon, with no Postgres or Redis.
+> Remaining stubs: artifact store, NATS bus, GitHub/Jira providers, the standalone
+> `mework-sandbox` binary, and cloudflare/custom engines.
 
 ## Binaries and modules
 
@@ -241,6 +245,8 @@ server: durable outbox  ──▶  provider REST API (e.g. Mello CreateComment) 
 | `libs/server/{session,bus,orchestrator,channel}/` | session manager, message broker (memory/postgres), job lifecycle, channel routing |
 | `libs/server/{webhook,writeback,provider}/` | webhook handler + `ParseTrigger`, REST write-back outbox, provider adapter registry (`provider/mello`) |
 | `libs/server/platform/{store,secret,token}/` | Postgres pool + goose migrations; AES-256-GCM seal/unseal; HMAC token hashing |
+| `libs/server/platform/store/sqlite/` `[Implemented — c0047]` | Pure-Go SQLite driver (`modernc.org/sqlite`); offline-only — production deployments still require Postgres |
+| `libs/client/runner/offline_stack.go` `[Implemented — c0047]` | Offline-stack orchestrator: spawn server → wait `/readyz` → enroll runner → spawn worker; reverse-order shutdown on signal |
 | `libs/sandbox/` | engines (`local`/`docker`/cloudflare/custom), runtime manager, agent detection |
 | `libs/tests/{integration,e2e}/` | DB-backed integration tests; `e2e` BDD suite (behind the `e2e` build tag) |
 
@@ -248,3 +254,26 @@ For endpoints, the wire schema, and the database tables, see
 [api-reference.md](api-reference.md). For the runner loop and execution model, see
 [runtime-and-sandbox.md](runtime-and-sandbox.md). For tokens and sealing, see
 [auth-and-secrets.md](auth-and-secrets.md).
+
+### Storage backends
+
+The server stores its job queue, runtimes, profiles, and session metadata
+in one of two backends, dispatched by URL scheme in
+`libs/server/platform/store/db.go`:
+
+| Backend | Status | Use |
+|---|---|---|
+| **Postgres** (`postgres://…`) | `[Implemented]` | Production server mode (default). Required for multi-tenant, replication, HA. |
+| **SQLite** (`sqlite://…`, `:memory:`, `file:…`) | `[Implemented — c0047]` (offline mode only) | Offline stack via `mework daemon start --offline --with-mezon`. Pure-Go driver (`modernc.org/sqlite`, no cgo). **Offline-only** — production deployments still require Postgres. Replication / HA / multi-writer are `[Planned]` and out of scope for the offline use case. |
+
+### Offline-stack orchestrator
+
+`mework daemon start --offline --with-mezon` `[Implemented — c0047]` turns
+the daemon into an orchestrator that supervises a 3-process bundle: an
+embedded `mework-server` (on SQLite), a `mework-mezon-worker`, and itself.
+The orchestrator owns the boot sequence (server → `/readyz` → enroll
+runner → worker), tracks child PIDs under `~/.mework/runtime/offline-pids.json`
+(mode `0600`), and tears the stack down in reverse spawn order on
+`SIGINT` / `SIGTERM` / `mework daemon stop`. The SQLite driver is selected
+automatically by the `DATABASE_URL` scheme. Full sequence diagram and
+runtime layout: [runtime-and-sandbox.md](runtime-and-sandbox.md#offline-stack-orchestrator).

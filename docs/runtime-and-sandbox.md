@@ -60,6 +60,7 @@ migration/compat path is provided for existing registered runtimes.
 | Command | Behavior |
 |---------|----------|
 | `mework daemon start` | Re-execs detached in the background (`--foreground` runs in-process). No-op if already running |
+| `mework daemon start --offline --with-mezon` | Spawns the offline stack (embedded `mework-server` on SQLite + `mework-mezon-worker`) and supervises it. See [Offline-stack orchestrator](#offline-stack-orchestrator) |
 | `mework daemon stop` | Graceful shutdown via the local health port; falls back to SIGTERM |
 | `mework daemon status` | Reports running/stopped, pid, and health port |
 | `mework daemon restart` | Stop (if running) then start |
@@ -77,6 +78,81 @@ The health/shutdown port is derived deterministically from the profile name
 (`19514 + fnv32a(profile)%1000`), so each profile gets its own port without config.
 Idempotency and loop prevention are entirely **server-side** (unique constraints +
 advisory locks), so the daemon keeps no local `state.json`.
+
+## Offline-stack orchestrator `[Implemented — c0047]`
+
+When the user runs `mework daemon start --offline --with-mezon`, the daemon
+becomes an **orchestrator** for a 3-process bundle: itself, an embedded
+`mework-server`, and a `mework-mezon-worker`. The orchestrator owns the
+lifecycle of every child — start order, readiness gating, signal
+forwarding, and reverse-order shutdown — so the user only ever types one
+command.
+
+### Sequence
+
+```
+daemon start --offline --with-mezon
+   │
+   ▼
+bootServer() ──▶ mework-server (DATABASE_URL=sqlite://…/data.db,
+   │           SERVER_KEY=<auto>, MEWORK_SECRET_KEY=<auto>,
+   │           LISTEN_ADDR=127.0.0.1:0)
+   ▼
+waitReady()  ──▶ GET http://127.0.0.1:<port>/readyz  (10s timeout, 200ms poll)
+   ▼
+enrollRunner() ──▶ POST /api/v1/runners/registration-tokens
+   │             then POST /api/v1/runners/enroll
+   │             (canonical handshake from libs/server/registry/)
+   │             → ~/.mework/runtime/runner.token  (0600)
+   ▼
+bootWorker() ──▶ mework-mezon-worker (MEWORK_SERVER_URL, MEWORK_RT_TOKEN,
+   │           MEZON_APP_ID, MEZON_API_KEY, REDIS_URL="" for miniredis)
+   ▼
+trackPids()  ──▶ ~/.mework/runtime/offline-pids.json  (0600, O_EXCL)
+   │
+   ▼
+forwardSignals() ◀── SIGINT / SIGTERM / `mework daemon stop`
+   │                 (worker → server, 5s grace, then SIGKILL)
+   ▼
+cleanup()    ──▶ remove pidfile
+```
+
+Each step logs at INFO; failures log at ERROR with the failing child PID
+and the last 50 lines of the child's log (`~/.mework/runtime/{server,worker}.log`).
+
+### Runtime layout
+
+```
+~/.mework/runtime/
+├── keys.json              # auto-minted SERVER_KEY + MEWORK_SECRET_KEY (0600)
+├── runner.token           # rt_token from runner enrollment (0600)
+├── offline-pids.json      # {workspace, started, children:[{role,pid,port,log}]} (0600)
+├── server.log             # mework-server stdout/stderr
+└── worker.log             # mework-mezon-worker stdout/stderr
+```
+
+The offline path deliberately reuses the canonical server enrollment handshake
+in `libs/server/registry/` rather than minting a side-channel token, so the
+server's auth invariants (`rt_token` returned once, only the HMAC lookup hash
+is stored) are preserved end to end.
+
+### SQLite driver
+
+The embedded `mework-server` uses the **`sqlite-backend`** capability — a
+driver in `libs/server/platform/store/sqlite/` backed by
+[`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite). This is a
+**pure-Go, no-cgo** SQLite implementation, so:
+
+- The `curl | sh` installer continues to work unchanged — no `gcc` required.
+- Cross-compilation (`GOOS=linux go build`) keeps working.
+- WAL mode (`journal_mode=WAL`), `busy_timeout=5s`, and `foreign_keys=on`
+  are set on every fresh connection.
+
+The SQLite driver is selected automatically by the `store.NewStore(ctx,
+dsn)` factory in `libs/server/platform/store/db.go` when the URL scheme is
+`sqlite://`, `:memory:`, or `file:…`. **SQLite is offline-only**: production
+deployments still require Postgres. See
+[deployment-guide.md](deployment-guide.md#sqlite-path-offline-only).
 
 ## AI CLI detection & execution `[Implemented]`
 

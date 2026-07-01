@@ -14,6 +14,7 @@ var initWorkspace string
 var initAgent string
 var initBackend string
 var initName string
+var initProvider string
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -26,6 +27,7 @@ and optional .claude/skills/ and .claude/commands/ for the specified AI agent.
 Examples:
   mework init --workspace . --name mybot
   mework init --workspace ./my-project --agent claude
+  mework init --workspace . --agent claude --name mybot --provider mezon
 `,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				if initWorkspace == "" {
@@ -42,6 +44,10 @@ Examples:
 			}
 			if initAgent == "" {
 				return fmt.Errorf("--agent is required (e.g. --agent claude)")
+			}
+			// Validate --provider early so we fail before touching disk.
+			if initProvider != "" && initProvider != "mezon" {
+				return fmt.Errorf("unsupported provider %q (supported: mezon)", initProvider)
 			}
 			dir := initWorkspace
 		absDir, err := filepath.Abs(dir)
@@ -66,12 +72,7 @@ Examples:
 		if name == "" {
 			name = "orchestrator"
 		}
-		yml := fmt.Sprintf(`name: %s
-version: "1.0.0"
-engine: local
-backend: %s
-role: %s
-`, name, initBackend, "orchestrator")
+		yml := buildWorkspaceYML(name, initBackend, initProvider)
 		if err := os.WriteFile(absDir+"/mework.yml", []byte(yml), 0600); err != nil {
 			return fmt.Errorf("write mework.yml: %w", err)
 		}
@@ -188,4 +189,24 @@ func init() {
 	initCmd.Flags().StringVar(&initAgent, "agent", "", "AI agent (claude, codex, etc.)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Agent name for mework agent send (required)")
 	initCmd.Flags().StringVar(&initBackend, "backend", "claude", "AI backend (claude, codex, etc.)")
+	initCmd.Flags().StringVar(&initProvider, "provider", "", "Optional provider (mezon) — writes a provider block + default policy to mework.yml")
+}
+
+// buildWorkspaceYML renders the mework.yml content for a fresh workspace.
+// When provider is "mezon", a provider: mezon block + a default echo policy
+// are appended. Otherwise the file is identical to the historical scaffold.
+func buildWorkspaceYML(name, backend, provider string) string {
+	base := fmt.Sprintf(`name: %s
+version: "1.0.0"
+engine: local
+backend: %s
+role: %s
+`, name, backend, "orchestrator")
+	if provider == "" {
+		return base
+	}
+	return base + fmt.Sprintf(`provider: %s
+policy:
+  passthrough: echo
+`, provider)
 }
