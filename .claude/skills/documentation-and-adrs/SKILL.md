@@ -1,6 +1,7 @@
 ---
 name: documentation-and-adrs
-description: Records decisions and documentation, adapted for the mework Go project. Use when making architectural decisions, changing public APIs or the provider adapter contract, shipping features, or recording context future engineers and agents need. Notes how OpenSpec design.md files serve as lightweight ADRs and where docs/ lives.
+description: Records decisions and documentation, adapted for the Mezon Mentor Bot ("MeKnow") platform. Use when making architectural decisions, changing the API contract (OpenAPI) or the BotPolicy/MCP boundary, shipping features, or recording context future engineers and agents need. Notes how OpenSpec design.md files serve as lightweight ADRs, that former RFCs live in docs/design/, and where docs/ lives.
+tags: [docs]
 ---
 
 # Documentation and ADRs
@@ -13,8 +14,8 @@ Document decisions, not just code. The most valuable documentation captures the 
 
 - Making a significant architectural decision
 - Choosing between competing approaches
-- Adding or changing a public API or the provider adapter contract
-- Shipping a feature that changes user-facing or webhook-trigger behavior
+- Adding or changing a public API surface (the OpenAPI contract, an MCP `kb.*` tool, a `BotPolicy` field)
+- Shipping a feature that changes a capability's behavior contract
 - Onboarding new team members (or agents) to the project
 - When you find yourself explaining the same thing repeatedly
 
@@ -25,85 +26,99 @@ Document decisions, not just code. The most valuable documentation captures the 
 ADRs capture the reasoning behind significant technical decisions. They're the
 highest-value documentation you can write.
 
-**In `mework`, OpenSpec change `design.md` files already serve as lightweight,
+**In this repo, OpenSpec change `design.md` files already serve as lightweight,
 per-change ADRs** — they record the problem, the chosen approach, and rejected
-alternatives for that change. Reserve standalone ADRs (in `docs/decisions/`) for
-**cross-cutting decisions** that span multiple changes/capabilities or that future
-proposals must respect: e.g. the provider-agnostic schema, the AES-256-GCM
-credential sealing model, prompt-via-stdin, or the pull/poll-vs-SSE direction.
+alternatives for that change. This is where new decisions go.
 
-### When to Write a (standalone) ADR
+This repo has **just replaced its RFC system with OpenSpec**. The former RFCs
+(`docs/design/`) are being preserved as design rationale under `docs/design/NNNN-<slug>.md`,
+linked from each capability's `## Purpose`, and **`openspec/specs/<capability>/spec.md`
+is now the canonical source of truth** for current behavior. So:
+
+- A decision scoped to **one change** → that change's `design.md`.
+- A **UI/visual decision** (component hierarchy, layout, interaction states) → that change's `ui.md`.
+- A **durable, cross-cutting** decision future changes must respect → a doc under
+  `docs/design/` (the former-RFC home), referenced from the relevant capability spec.
+
+### When to Write a (durable) design doc / ADR under docs/design/
 
 - A decision that constrains *future* OpenSpec changes (not just this one)
-- Choosing a major dependency (pgx, chi, goose, goreleaser, mcp-go)
-- The provider-agnostic data model and `(provider_code, external_*_id)` identity
-- The credential-sealing / secrets strategy (AES-256-GCM, daemon never holds creds)
-- The job-queue concurrency model (row locks, `FOR UPDATE SKIP LOCKED`, one active job per runtime)
-- The webhook trigger grammar and de-dup invariant
+- Choosing a major dependency or boundary (`anthropic-sdk-python` directly — no
+  LangChain/LangGraph; MCP as the internal tool boundary; `sentence-transformers`
+  for local embeddings; MiniMax via the Anthropic-compatible endpoint)
+- The multi-tenant data model and `tenant_id`-on-everything invariant
+- The credential-encryption strategy (Fernet, `ingest_core.crypto`, decrypt
+  server-side only)
+- The retrieval-runtime / lobe-engine model (append-only versions, the compression
+  invariant, `temperature == 0` on synthesize/cite/filter)
+- The citations-mandatory / refuse contract
 - Any decision that would be expensive to reverse
 
 If a decision lives entirely within one change, capture it in that change's
-`design.md` instead of a separate ADR.
+`design.md` instead of a separate doc.
 
-### ADR Template
+### Design-doc / ADR Template
 
-Store standalone ADRs in `docs/decisions/` with sequential numbering:
+Store durable design docs in `docs/design/` with sequential numbering (the
+former-RFC convention):
 
 ```markdown
-# ADR-001: Provider-agnostic schema keyed by (provider_code, external_*_id)
+# 0007: Multi-tenant isolation keyed by tenant_id on every query and cache key
 
 ## Status
-Accepted | Superseded by ADR-XXX | Deprecated
+Accepted | Superseded by 00XX | Deprecated
 
 ## Date
-2026-06-20
+2026-06-22
 
 ## Context
-mework must connect multiple task platforms (Mello today; Jira / Linear / GitHub
-Issues by design). Hard-coding provider columns would force a schema migration
-for every new provider and couple the queue to one platform's identifiers.
+MeKnow is a multi-tenant RAG platform: many orgs share one deployment, and an
+org must never see another org's documents, answers, or cache. Bolting tenancy on
+per-feature would leak across joins and shared caches.
 
 ## Decision
-Identify all external entities by (provider_code, external_*_id). Provider-specific
-behavior lives behind a Go adapter under internal/server/provider/<name>/, selected
-by a registry. Adding a provider adds an adapter, not a migration.
+Every table, query, cache key, and log line carries tenant_id. Cross-tenant joins
+are bugs. Cache keys additionally include an ACL-cohort hash so two callers with
+different KB permissions never share a cached answer. ACL is enforced server-side
+inside retrieve_kb; the caller identity is inherited from the request, never
+trusted from the model.
 
 ## Alternatives Considered
 
-### Per-provider columns / tables
-- Pros: Simple queries for a single provider
-- Cons: Every new provider needs a migration; queue logic forks per provider
-- Rejected: violates the "add a provider without a migration" invariant
+### Row-level security only, no tenant_id in cache keys
+- Pros: DB enforces isolation at the row layer
+- Cons: shared caches still leak across tenants/ACL cohorts
+- Rejected: the cache is a real cross-tenant leak path; keys must be scoped
 
-### A single JSON blob per external entity
-- Pros: Maximally flexible
-- Cons: Loses the UNIQUE(provider_code, external_event_id) de-dup guarantee
-- Rejected: webhook de-dup depends on a real unique index
+### Per-tenant database / schema
+- Pros: hard isolation
+- Cons: operationally heavy; breaks shared embeddings + golden-set tooling
+- Rejected: tenant_id scoping gives the guarantee without the operational cost
 
 ## Consequences
-- Webhook de-dup relies on UNIQUE(provider_code, external_event_id)
-- New providers ship as adapters under internal/server/provider/
-- Spec lives in openspec/specs/provider-gateway/spec.md
+- Cross-tenant isolation is gate-tested (benchmarks/gates/tenant-isolation-test.sh)
+- Spec lives in openspec/specs/auth-and-tenancy/spec.md
 ```
 
-### ADR Lifecycle
+### ADR / design-doc Lifecycle
 
 ```
 PROPOSED → ACCEPTED → (SUPERSEDED or DEPRECATED)
 ```
 
-- **Don't delete old ADRs.** They capture historical context.
-- When a decision changes, write a new ADR that references and supersedes the old one.
-- Cross-reference: link the ADR from the relevant `openspec/specs/<capability>/spec.md`
-  and from the change `design.md` that introduced or revisited the decision.
+- **Don't delete old design docs / RFCs.** They capture historical context — that's
+  exactly why the former `docs/design/` are being preserved under `docs/design/`.
+- When a decision changes, write a new doc that references and supersedes the old one.
+- Cross-reference: link the doc from the relevant `openspec/specs/<capability>/spec.md`
+  (`## Purpose`) and from the change `design.md` that introduced or revisited the decision.
 
-## OpenSpec specs vs. ADRs (this repo)
+## OpenSpec specs vs. design docs (this repo)
 
 | Artifact | Captures | Lives in |
 |---|---|---|
 | `openspec/specs/<capability>/spec.md` | The *current* behavior contract (the source of truth) | `openspec/specs/` |
 | change `design.md` | The reasoning for *this* change (a lightweight ADR) | `openspec/changes/<name>/design.md` |
-| standalone ADR | A cross-cutting decision future changes must respect | `docs/decisions/` |
+| durable design doc (former RFC) | A cross-cutting decision future changes must respect | `docs/design/NNNN-<slug>.md` |
 
 When behavior changes, update the spec via a change's delta + `/opsx:sync` — don't
 let the spec drift from the code.
@@ -114,95 +129,96 @@ let the spec drift from the code.
 
 Comment the *why*, not the *what*:
 
-```go
-// BAD: Restates the code
-// increment the counter
-counter++
+```python
+# BAD: Restates the code
+# increment the counter
+counter += 1
 
-// GOOD: Explains a non-obvious invariant
-// Claim under FOR UPDATE SKIP LOCKED so concurrent daemons never grab the same
-// job; the partial unique index enforces one active job per runtime, so a second
-// claim by the same runtime is skipped rather than blocked.
-row := tx.QueryRow(ctx, claimSQL, runtimeID)
+# GOOD: Explains a non-obvious invariant
+# Cache key must include the ACL-cohort hash, not just tenant_id + query: two
+# callers in the same tenant with different KB permissions must never share a
+# cached answer, or retrieve_kb's server-side ACL is silently bypassed.
+key = cache_key(tenant_id, query, acl_cohort_hash(caller))
 ```
 
 ### When NOT to Comment
 
-```go
-// Don't comment self-explanatory code
-func total(items []LineItem) int {
-    sum := 0
-    for _, it := range items {
-        sum += it.Price * it.Qty
-    }
-    return sum
-}
+```python
+# Don't comment self-explanatory code
+def total(items: list[LineItem]) -> int:
+    return sum(it.price * it.qty for it in items)
 
-// Don't leave TODO comments for things you should just do now
-// TODO: add error handling  ← just handle the error
+# Don't leave TODO comments for things you should just do now
+# TODO: add error handling  ← just handle the error
 
-// Don't leave commented-out code  ← delete it, git has history
+# Don't leave commented-out code  ← delete it, git has history
 ```
 
 ### Document Known Gotchas (this repo has several)
 
-```go
-// IMPORTANT: prompts go to the AI CLI over STDIN, never argv. Ticket/comment
-// content is attacker-controllable; keeping it off the command line avoids shell
-// injection. See the auth-and-secrets spec and CLAUDE.md "Conventions".
-cmd.Stdin = strings.NewReader(prompt)
+```python
+# IMPORTANT: the caller identity is inherited from the request and passed to
+# retrieve_kb explicitly; it is NEVER read from model output or tool arguments.
+# ACL is enforced server-side here — the prompt is not a security boundary.
+chunks = retrieve_kb(tenant_id=ctx.tenant_id, caller=ctx.caller, query=q)
 ```
 
-Mirror the invariants already listed in `CLAUDE.md` (transactional state machine,
-terminal states immutable, self-retrigger guard, file perms 0600/0700) wherever
-the code enforces them.
+Mirror the hard invariants already listed in `openspec/project.md` (citations
+mandatory / `refuse_if: no_citations`, `temperature == 0` on
+synthesize/cite/filter, append-only versions, the compression invariant — raw KB
+chunks never leave a sub-agent) wherever the code enforces them.
 
 ## API Documentation
 
-For public surfaces — the provider adapter interface, the `meworkclient` HTTP
-client, and the server's HTTP routes — document with Go doc comments:
+The **API contract is OpenAPI-generated**: the backend produces the spec and the
+portal's types are *generated* from it — **never hand-write portal types**. Document
+the *behavior* of an endpoint or tool at its source (backend route handler, MCP
+`kb.*` tool) with a docstring; the wire shape comes from OpenAPI.
 
-```go
-// CreateComment posts result back to the provider over its REST API. It is called
-// server-side only, after the sealed connection credential is unsealed; the daemon
-// never holds provider credentials. Returns the provider's comment ID on success.
-//
-// Errors are retried via the durable outbox, so CreateComment must be idempotent
-// with respect to (provider_code, external_event_id) where the provider allows it.
-func (a *Adapter) CreateComment(ctx context.Context, in CommentInput) (string, error) {
-    // ...
-}
+```python
+def retrieve_kb(tenant_id: str, caller: Caller, query: str) -> list[CitedChunk]:
+    """Retrieve grounded KB chunks for a query within one tenant.
+
+    ACL is enforced server-side using `caller` (inherited from the request,
+    never trusted from the model). Returns only chunks the caller is permitted
+    to see, each carrying a citation; an answer-producing path that gets no
+    permitted chunks MUST refuse rather than emit ungrounded claims.
+
+    Raw chunks must not cross a sub-agent boundary — only memo_schema_ref-shaped
+    objects do (the compression invariant).
+    """
+    ...
 ```
 
-For the HTTP routes (`/webhooks/{provider}`, `/api/v1/jobs/*`, management routes),
-document the auth model inline (PAT vs. `rt_token` vs. signature-verified) and keep
-the canonical description in the matching `openspec/specs/` capability.
+For HTTP routes, document the auth model inline (service JWT between backend and
+workers; HMAC-signed inbound webhooks) and keep the canonical wire description in
+OpenAPI and the matching `openspec/specs/` capability (`api-surface`).
 
 ## README & docs/ Structure
 
-Project docs live under `docs/`. Key entry points:
+Durable cross-cutting docs live under `docs/`. Key entry points:
 
 | Doc | Purpose |
 |---|---|
-| `README.md` | Quick start, build/test commands, high-level overview |
-| `docs/product-overview.md` | Product description, actors, use cases |
+| `README.md` | Quick start, gate commands, high-level overview |
+| `docs/product/` | Product description, actors, use cases |
 | `docs/openspec-workflow.md` | The spec-driven workflow and artifact formats |
-| `docs/target-architecture.md` | The proposed (not-yet-built) agent-hub redesign |
-| `docs/codebase-summary.md` | Trusted, current map of the code |
-| `CLAUDE.md` | Conventions/invariants for AI agents and humans |
+| `docs/engineering/` | Engineering practice, toolchain map, conventions |
+| `docs/design/` | Durable design rationale (the former RFCs, `NNNN-<slug>.md`) |
+| `openspec/project.md` | Toolchain + hard invariants for agents and humans |
 
-A good README covers quick start, the `make` command table, and an architecture
-overview that links to the docs and `openspec/specs/`:
+A good README covers quick start, the gate commands per toolchain, and an
+architecture overview that links to `docs/` and `openspec/specs/`:
 
 ```markdown
-## Commands
-| Command | Description |
-|---------|-------------|
-| `make build` | Build bin/mework and bin/mework-server |
-| `make vet`   | go vet ./... |
-| `make test`  | go test -p 1 ./... (DB tests need TEST_DATABASE_URL) |
-| `make test-db` | Start docker Postgres for DB-backed tests |
-| `make snapshot` | goreleaser cross-compile (CLI only) |
+## Gates (run from the owning package dir)
+| Toolchain | Commands |
+|-----------|----------|
+| Python (`uv`) | `uv run ruff check .` · `uv run pyright` · `uv run python -m pytest -q` |
+| Go (go 1.24) | `go build ./...` · `go vet ./...` · `go test -race ./...` |
+| TypeScript (`apps/portal`) | `pnpm typecheck` · `pnpm lint` · `pnpm test` |
+| Benchmarks | `bash benchmarks/ci-free-gates.sh` |
+| Always | `openspec validate "<change>" --strict` |
 ```
 
 ## Changelog Maintenance
@@ -216,24 +232,25 @@ You rarely hand-edit it; keep entries terse and user-facing:
 
 ## [Unreleased]
 ### Added
-- Webhook trigger grammar routes the `journal` workflow.
+- worker-retrieve enforces ACL-cohort cache keys for cross-tenant safety.
 
 ### Fixed
-- Heartbeat race that could double-claim a runtime.
+- Citation filter no longer emits an answer when retrieve_kb returns no permitted chunks.
 
 ### Changed
-- Job claim now uses FOR UPDATE SKIP LOCKED for fairness under load.
+- Embeddings pinned to a single sentence-transformers model version per KBVersion.
 ```
 
 ## Documentation for Agents
 
 Special consideration for AI agent context:
 
-- **`CLAUDE.md`** — project conventions and invariants; keep it current and accurate.
+- **`openspec/project.md`** — toolchain map (the gate resolver's truth) and the hard
+  invariants; keep it current and accurate.
 - **`openspec/specs/`** — the behavior contract agents build against; update via delta + `/opsx:sync`.
 - **change `design.md`** — lightweight ADRs that prevent re-deciding settled trade-offs.
-- **Standalone ADRs (`docs/decisions/`)** — cross-cutting decisions future changes must respect.
-- **Inline gotchas** — prevent agents from falling into the repo's known traps (stdin prompts, terminal-state immutability, no-migration-per-provider).
+- **Durable design docs (`docs/design/`)** — cross-cutting decisions (the preserved former RFCs) future changes must respect.
+- **Inline gotchas** — prevent agents from falling into the repo's known traps (server-side ACL, citations-mandatory, the compression invariant, `tenant_id` on every query).
 
 ## Common Rationalizations
 
@@ -241,31 +258,34 @@ Special consideration for AI agent context:
 |---|---|
 | "The code is self-documenting" | Code shows what. It doesn't show why, what alternatives were rejected, or which invariant it upholds. |
 | "We'll write docs when the API stabilizes" | The spec/design *is* the first test of the design. Write it first via `/opsx:propose`. |
-| "Nobody reads docs" | Agents read `CLAUDE.md`, specs, and ADRs. Future engineers do. Your 3-months-later self does. |
-| "ADRs are overhead" | A 10-minute design.md or ADR prevents a 2-hour re-litigation of a settled trade-off. |
+| "Nobody reads docs" | Agents read `openspec/project.md`, specs, and design docs. Future engineers do. Your 3-months-later self does. |
+| "design.md is overhead" | A 10-minute design.md prevents a 2-hour re-litigation of a settled trade-off. |
 | "Comments get outdated" | Comments on *why*/invariants are stable. Comments on *what* get outdated — write the former. |
 | "I'll just update the code, not the spec" | The spec drifts and the next agent builds the wrong thing. Sync the spec. |
+| "I'll just edit the portal types" | They're generated from OpenAPI. Hand-edits get clobbered — change the backend spec source instead. |
 
 ## Red Flags
 
-- Architectural decisions with no written rationale (no design.md, no ADR)
+- Architectural decisions with no written rationale (no design.md, no design doc)
 - The code changed behavior but `openspec/specs/` was not updated
-- Provider adapter or HTTP routes with no doc comments
-- README that doesn't explain how to build/test (`make build` / `make test`)
+- Backend routes or MCP `kb.*` tools with no docstring; hand-written portal types
+- README that doesn't explain how to run the gates (`uv run pytest`, `go test -race`, `pnpm test`)
 - Commented-out code instead of deletion
 - TODO comments that have lingered for weeks
-- A cross-cutting decision (schema, secrets, concurrency) with no ADR
-- `CLAUDE.md` that no longer matches the code
+- A cross-cutting decision (tenancy, secrets, retrieval-runtime) with no design doc under `docs/design/`
+- `openspec/project.md` that no longer matches the code/toolchain
 
-## mework notes
+## MeKnow notes
 
-- Docs live in `docs/` (e.g. `docs/openspec-workflow.md`, `docs/product-overview.md`,
-  `docs/target-architecture.md`, `docs/codebase-summary.md`).
-- OpenSpec change `design.md` files already act as lightweight ADRs; reserve
-  standalone ADRs in `docs/decisions/` for **cross-cutting** decisions future
-  changes must respect.
+- Durable docs live under `docs/` (`docs/engineering/`, `docs/design/`,
+  `docs/product/`). The former RFCs (`docs/design/`) are being preserved as
+  `docs/design/NNNN-<slug>.md` rationale, linked from each capability's `## Purpose`.
+- OpenSpec change `design.md` files act as lightweight ADRs; reserve durable design
+  docs in `docs/design/` for **cross-cutting** decisions future changes must respect.
 - The behavior source of truth is `openspec/specs/<capability>/spec.md`; update it
   via a change's delta + `/opsx:sync`, not by editing the spec directly.
+- The API contract is **OpenAPI-generated** — portal types are generated from it,
+  never hand-written.
 - `/opsx:ship` generates the root `CHANGELOG.md` entry (Keep a Changelog, one
   bullet per change) as part of apply → verify → sync → changelog → PR.
 - Capture verification evidence under `openspec/changes/<name>/evidence/`.
@@ -276,10 +296,10 @@ Special consideration for AI agent context:
 
 After documenting:
 
-- [ ] Significant decisions have a design.md (per-change) or an ADR (cross-cutting)
+- [ ] Significant decisions have a design.md (per-change) or a docs/design/ doc (cross-cutting)
 - [ ] `openspec/specs/` reflects the new behavior (synced, not drifted)
-- [ ] Provider adapter / HTTP route / meworkclient surfaces have Go doc comments
-- [ ] Known gotchas (stdin prompts, terminal-state immutability, etc.) are documented inline where they matter
-- [ ] README covers `make build` / `make test` and links to docs + specs
+- [ ] Backend routes / MCP `kb.*` tools have docstrings; portal types are generated (not hand-written)
+- [ ] Known gotchas (server-side ACL, citations-mandatory, compression invariant, tenant_id) are documented inline where they matter
+- [ ] README covers the toolchain gates and links to docs + specs
 - [ ] No commented-out code remains
-- [ ] `CLAUDE.md` is current and accurate
+- [ ] `openspec/project.md` is current and accurate

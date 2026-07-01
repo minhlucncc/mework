@@ -1,125 +1,102 @@
 ---
 name: openspec-propose
-description: Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation.
-license: MIT
-compatibility: Requires openspec CLI.
-metadata:
-  author: openspec
-  version: "1.0"
-  generatedBy: "1.4.1"
+description: Creates a new OpenSpec change with the standard artifact structure — proposal.md, design.md, tasks.md, ui.md, and delta specs. Detects when a change has a user-facing surface and creates ui.md. Includes design language discovery guidance.
+tags: []
 ---
 
-Propose a new change - create the change and generate all artifacts in one step.
+# Openspec Propose
 
-I'll create a change with artifacts:
-- proposal.md (what & why)
-- design.md (how)
-- tasks.md (implementation steps)
+Creates a new OpenSpec change with the standard artifact structure. Run:
 
-When ready to implement, run /opsx:apply
+```
+node .claude/workflows/lib/openspec.js new change "<name>"
+```
 
----
+This scaffolds `openspec/changes/<name>/` with `proposal.md`, `design.md`, `tasks.md`, and `specs/`.
 
-**Input**: The user's request should include a change name (kebab-case) OR a description of what they want to build.
+Then draft:
+- **proposal.md** — what, why, scope, assumptions
+- **Delta specs** under `specs/<capability>/spec.md` using `ADDED/MODIFIED/REMOVED/RENAMED`
+- **design.md** — architectural decisions and rationale
+- **ui.md** — UI/visual design (optional; create only for changes with a user-facing surface)
+- **tasks.md** — ordered, verifiable implementation tasks
 
-**Steps**
+Name convention: `cNNNN-<kebab-slug>` starting from the next available number.
 
-1. **If no clear input provided, ask what they want to build**
+## Detecting when to create ui.md
 
-   Use the **AskUserQuestion tool** (open-ended, no preset options) to ask:
-   > "What change do you want to work on? Describe what you want to build or fix."
+If the change has a visible user-facing surface — new screens, component changes,
+UX improvements, or UI-adjacent work — create `ui.md` following the `ui-design`
+skill (`openspec/changes/<name>/ui.md`). Check the prompt for keywords like
+"UI", "page", "screen", "component", "form", "frontend", "portal", "dialog",
+"modal", "layout", "navigation", "theme", "responsive", or "mobile" to determine
+if UI design is needed.
 
-   From their description, derive a kebab-case slug (e.g., "add user authentication" → `add-user-auth`).
+If the change is purely backend, infrastructure, or spec-only with no UI surface,
+skip `ui.md`. State "no UI surface — ui.md not created" in the propose output.
 
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
+## Design language discovery
 
-2. **Determine the order-prefix and create the change directory**
+Before creating `ui.md`, discover what design documentation the project already has.
+Every project is different — some have a comprehensive DESIGN.md, others have design
+skills, others have nothing but the code.
 
-   This project names every change directory `cNNNN-<kebab-slug>`, where `NNNN` is a
-   4-digit, zero-padded sequence number encoding apply/dependency order (e.g.
-   `c0002-repo-restructure`, `c0002-message-bus`). The leading `c` is required:
-   OpenSpec rejects change names that start with a digit (`openspec new change`,
-   `status --change`, and `instructions --change` all enforce a leading letter).
-   Compute the next number:
-   ```bash
-   ls -1d openspec/changes/c[0-9]* 2>/dev/null | sed -E 's#.*/c([0-9]+)-.*#\1#' | sort -n | tail -1
-   ```
-   The next number is that value + 1 (start at `c0001` if none exist). If this change
-   must run **before** existing ones, pick an earlier free number and renumber later
-   ones as needed. Then create it with the prefixed name:
-   ```bash
-   openspec new change "cNNNN-<slug>"
-   ```
-   This creates a scaffolded change in the planning home resolved by the CLI with `.openspec.yaml`.
-   Use the full `cNNNN-<slug>` as `<name>` in every subsequent command below.
+1. **Check for existing design documentation:**
+   - `DESIGN.md` or `DESIGN_SYSTEM.md` at the project root
+   - `docs/design/` directory or `docs/design.md`
+   - `.claude/skills/*/SKILL.md` files that reference design, UI, or UX
+   - `STYLE_GUIDE.md`, `BRAND.md`, or similar
+   - `openspec/patterns/ux-patterns.md` (UX pattern reference, if previously created)
 
-3. **Get the artifact build order**
-   ```bash
-   openspec status --change "<name>" --json
-   ```
-   Parse the JSON to get:
-   - `applyRequires`: array of artifact IDs needed before implementation (e.g., `["tasks"]`)
-   - `artifacts`: list of all artifacts with their status and dependencies
-   - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths.
+2. **If `openspec/patterns/ux-patterns.md` exists:** Read it. It contains the
+   project's UX patterns, abstract business flows, and visual concepts. Reference
+   it when creating `ui.md` — the `ui-design` skill expects it.
 
-4. **Create artifacts in sequence until apply-ready**
+3. **If it does NOT exist but the project has other design documentation:**
+   Read DESIGN.md or equivalent and reference what you find. The `ui-design` skill's
+   Step 1 (Discover the Project's Design Language) will guide the process.
 
-   Use the **TodoWrite tool** to track progress through the artifacts.
+4. **If NO design documentation exists at all:** Note this in the `ui.md` "Design
+   Language Reference" section. The design will be anchored to patterns discovered
+   by reading the codebase directly. Consider running the `ux-pattern-audit` skill
+   as a separate change to establish the baseline.
 
-   Loop through artifacts in dependency order (artifacts with no pending dependencies first):
+The key insight: **every project already has a design language** — in its DESIGN.md,
+its codebase conventions, its component patterns. The `ui.md` must find and reference
+it, not invent from scratch.
 
-   a. **For each artifact that is `ready` (dependencies satisfied)**:
-      - Get instructions:
-        ```bash
-        openspec instructions <artifact-id> --change "<name>" --json
-        ```
-      - The instructions JSON includes:
-        - `context`: Project background (constraints for you - do NOT include in output)
-        - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
-        - `template`: The structure to use for your output file
-        - `instruction`: Schema-specific guidance for this artifact type
-        - `resolvedOutputPath`: Resolved path or pattern to write the artifact
-        - `dependencies`: Completed artifacts to read for context
-      - Read any completed dependency files for context
-      - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
-      - Apply `context` and `rules` as constraints - but do NOT copy them into the file
-      - Show brief progress: "Created <artifact-id>"
+## Task tagging
 
-   b. **Continue until all `applyRequires` artifacts are complete**
-      - After creating each artifact, re-run `openspec status --change "<name>" --json`
-      - Check if every artifact ID in `applyRequires` has `status: "done"` in the artifacts array
-      - Stop when all `applyRequires` artifacts are done
+When creating `tasks.md`, annotate each task with tags that classify the type of work:
 
-   c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
-      - Then continue with creation
+```markdown
+## Task [1]: Login form UI  (tags: ui, auth)
 
-5. **Show final status**
-   ```bash
-   openspec status --change "<name>"
-   ```
+## Task [2]: Token validation API  (tags: backend, api, security)
 
-**Output**
+## Task [3]: User table migration  (tags: db, migration)
 
-After completing all artifacts, summarize:
-- Change name and location
-- List of artifacts created with brief descriptions
-- What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run `/opsx:apply` or ask me to implement to start working on the tasks."
+## Task [4]: Setup CI pipeline  (tags: infra)
+```
 
-**Artifact Creation Guidelines**
+Tags drive the tag-driven skill routing system. During `ship-plan`, units inherit tags
+from the tasks they cover. During `ship-code`, only skills matching the unit's tags are
+loaded — no irrelevant guidance for backend units, no missed UI patterns for frontend.
 
-- Follow the `instruction` field from `openspec instructions` for each artifact type
-- The schema defines what each artifact should contain - follow it
-- Read dependency artifacts for context before creating new ones
-- Use `template` as the structure for your output file - fill in its sections
-- **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
-  - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
-  - These guide what you write, but should never appear in the output
+Standard tags (see the `tag-system` skill for the full taxonomy):
+- `ui` — components, screens, user-facing surfaces
+- `backend` — server logic, APIs, services
+- `api` — endpoints, contracts
+- `db` — schemas, queries, migrations
+- `auth` — authentication, authorization
+- `security` — hardening, vulnerability fixes
+- `config` — configuration, setup
+- `docs` — documentation, ADRs
+- `infra` — CI/CD, git, deployment
+- `test` — test infrastructure
+- `migration` — data/schema migrations
+- `cli` — CLI tools, automation
 
-**Guardrails**
-- Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
-- Always read dependency artifacts before creating a new one
-- If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
-- If a change with that name already exists, ask if user wants to continue it or create a new one
-- Verify each artifact file exists after writing before proceeding to next
+**If a task has no explicit tags**, tags will be inferred during ship-plan from
+the file paths in "Files likely touched" and task text keywords. But explicit tags
+are more reliable — add them when creating tasks.

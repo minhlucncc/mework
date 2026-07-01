@@ -1,50 +1,56 @@
 ---
 name: security-and-hardening
-description: Hardens code against vulnerabilities (mework-adapted, Go). Use when handling webhook payloads or ticket content, working with rt_token/PAT auth, sealing/unsealing provider credentials, executing AI CLIs, or integrating a new provider. Use when building any feature that accepts untrusted data, manages tokens, or interacts with provider REST APIs. Maps the OWASP Top 10 onto this repo's concrete controls (stdin-not-argv, AES-256-GCM sealing, HMAC token hashing, signature-verified webhooks, least-privilege daemon, 0600/0700 file perms).
+description: Hardens code against vulnerabilities (MeKnow-adapted, polyglot). Use when handling untrusted documents or webhook payloads, working with tenant isolation or server-side ACL in retrieve_kb, encrypting/decrypting provider credentials, the service JWT between backend and workers, or any answer-producing path. Use when building any feature that accepts untrusted data, manages tokens, or crosses a tenant boundary. Maps the OWASP Top 10 onto this repo's concrete controls (multi-tenant isolation + ACL-cohort cache keys, server-side ACL in retrieve_kb, Fernet credential encryption, HS256 service JWT, HMAC-signed inbound webhooks, citations-mandatory refusal, the compression invariant against KB prompt-injection).
+tags: [security]
 ---
 
 # Security and Hardening
 
 ## Overview
 
-Security-first development practices for the `mework` runtime daemon and
-provider-gateway server. Treat every external input as hostile, every secret as
-sacred, and every authorization check as mandatory. Security isn't a phase — it's
-a constraint on every line of code that touches ticket content, tokens, provider
-credentials, or the AI-CLI execution path.
+Security-first development practices for the Mezon Mentor Bot ("MeKnow")
+multi-tenant RAG platform — the `backend`, the workers (`worker-ingest`,
+`worker-retrieve`, `worker-task`, `worker-webhook`, …), and the shared `packages/`
+(`rag-core`, `agent-core`, `arag-core`, `ingest-core`, `llm-transport`). Treat
+every external input as hostile, every secret as sacred, every authorization check
+as mandatory, and **every other tenant's data as off-limits**. Security isn't a
+phase — it's a constraint on every line that touches a query, a cache key, KB
+content, provider credentials, or the LLM/retrieval path.
 
-This project already encodes a specific set of security controls as **invariants**
-(see CLAUDE.md). They are this repo's concrete answer to the OWASP Top 10 — keep
-them intact, and map any new work onto them rather than inventing parallel
-mechanisms.
+Each project encodes its own concrete security controls as **invariants**. In an
+mzspec-installed repo these live in `mzspec.config.json` under the `invariants`
+array — read them first and map any new work onto them rather than inventing
+parallel mechanisms. The table below is the **MeKnow reference set** (the example
+this skill was extracted from); replace it with your project's `invariants` when
+adapting the skill, and keep the methodology (OWASP-mapped, invariant-driven) intact.
 
-## The mework Security Invariants (do not break these)
+## The MeKnow Security Invariants (reference example — do not break these in MeKnow)
 
 | Invariant | What it defends | Where |
 |---|---|---|
-| **Prompts to AI CLIs go over STDIN, never argv** | Command injection — ticket content is attacker-controllable | `internal/agentrun/runner.go` |
-| **Provider credentials sealed AES-256-GCM at rest**, unsealed only server-side at write-back; **daemon never holds credentials** | Secret exposure, blast radius if a dev machine is compromised | `internal/server/secret/`, write-back in `internal/server/jobs/` |
-| **`rt_token` looked up via HMAC-SHA256**, never stored/compared in plaintext | Token theft from DB; timing attacks | `internal/server/token/` |
-| **Webhooks signature-verified** before the payload is trusted | Spoofed events, forged enqueues | `internal/server/webhook/` |
-| **PAT guards `/api/v1` management routes; `rt_token` guards `/api/v1/jobs/*`** | Broken access control, privilege confusion | `internal/server/auth/`, `internal/server/middleware/` |
-| **Webhook de-dup via `UNIQUE(provider_code, external_event_id)`** | Replay / duplicate-event amplification | `jobs` schema + `jobs.Enqueue` |
-| **One active job per runtime** (partial unique index); claims use `FOR UPDATE SKIP LOCKED` | Resource exhaustion, double-execution | `internal/server/jobs/` |
-| **Self-retrigger guard** — never enqueue for a comment authored by the daemon's own provider user | Infinite loop / DoS amplification | webhook → enqueue path |
-| **Job state machine transactional with row locks; terminal states immutable** | Tampering with job outcome | `internal/server/jobs/state.go` |
-| **Config/credential files `0600`, dirs `0700`** | Local secret leakage to other users | `internal/cli/` |
-| **Required server keys fail fast** (`DATABASE_URL`, `SERVER_KEY`, `MEWORK_SECRET_KEY`) | Running with missing/weak crypto config | server startup |
+| **Multi-tenant by default** — `tenant_id` on every table, query, cache key, and log line; cross-tenant joins are bugs; cache keys include an ACL-cohort hash | Cross-tenant data leakage (the #1 risk) | every query path; cache layer |
+| **ACL enforced server-side inside `retrieve_kb`** — caller identity inherited from the request, never trusted from the model | Broken access control; privilege confusion via the model | `retrieve_kb` in `rag-core`/`worker-retrieve` |
+| **Provider credentials Fernet-encrypted**, decrypted only server-side | Secret exposure; blast radius if a worker host is compromised | `ingest_core.crypto` |
+| **Service JWT (HS256) between backend and workers** | Spoofed inter-service calls | backend ↔ worker auth |
+| **Inbound webhooks HMAC-signed and verified** before the payload is trusted | Spoofed events, forged ingests/triggers | `worker-webhook` |
+| **Citations mandatory** — answer paths refuse rather than emit ungrounded claims (`filter` stage contains `refuse_if: no_citations`) | Ungrounded / fabricated output | `filter` stage; `agent-core` |
+| **`temperature == 0`** on every `synthesize`, `cite`, `filter` stage | Non-determinism in grounded paths | policy stages |
+| **Compression invariant** — raw KB chunks never leave a sub-agent; only `memo_schema_ref`-shaped objects cross stage boundaries | KB-content prompt-injection leaking across boundaries | sub-agent boundaries |
+| **Versions are append-only** — `BotVersion`, `KBVersion`, golden sets, traces are new children, never in-place mutation | Tampering with the behavior/audit record | data model |
+| **OpenAPI is the API contract** — portal types are generated, never hand-written | Drift between enforced contract and client | backend OpenAPI gen |
 
 When you touch a subsystem, the invariant in that row is the control you must
 preserve. The rest of this skill maps OWASP onto them.
 
 ## When to Use
 
-- Building anything that accepts webhook payloads or ticket/comment content
-- Working on `rt_token` / PAT authentication or authorization middleware
-- Sealing/unsealing or storing provider credentials
-- Executing AI CLIs (`internal/agentrun`) or building their prompts
-- Adding a new provider adapter under `internal/server/provider/<name>/`
-- Adding write-back to a provider REST API
+- Building anything that accepts a request, webhook payload, or KB document content
+- Working on the server-side ACL inside `retrieve_kb`, or any retrieval path
+- Encrypting/decrypting or storing provider credentials (`ingest_core.crypto`)
+- Issuing or verifying the service JWT between backend and workers
+- Verifying inbound webhook HMAC signatures (`worker-webhook`)
+- Ingesting documents (the untrusted KB → prompt-injection surface)
+- Touching a query, cache key, or log line (the `tenant_id` surface)
 - Handling any PII or credential data
 
 ## Process: Threat Model First
@@ -53,27 +59,31 @@ Controls bolted on without a threat model are guesses. Before hardening, spend
 five minutes thinking like an attacker.
 
 1. **Map the trust boundaries.** Where does untrusted data cross into the system?
-   In mework: **webhook payloads**, **ticket/comment content** (which becomes the
-   AI prompt), provider REST responses, CLI flags/env, and the **AI CLI's own
-   output** (it later gets posted back to a provider). Every one is attack surface.
-2. **Name the assets.** What's worth stealing or breaking? Provider credentials
-   (sealed), `rt_token`/PAT values, the AES key (`MEWORK_SECRET_KEY`) and HMAC key
-   (`SERVER_KEY`), the developer's source tree the daemon runs against, and the
-   integrity of write-back (posting results as the user).
+   In MeKnow: **inbound webhook payloads**, **end-user questions** (which become the
+   model prompt), **ingested KB documents** (which become retrieval context and can
+   carry prompt-injection), provider API responses, and the **LLM's own output**
+   (which is shown to users with citations). Every one is attack surface — and the
+   **tenant boundary** sits across all of them.
+2. **Name the assets.** What's worth stealing or breaking? **Another tenant's KB
+   data and answers** (the crown jewels), provider credentials (Fernet-encrypted),
+   the service-JWT signing secret, the Fernet key, the integrity of grounded answers
+   (citations), and the append-only version record.
 3. **Run STRIDE over each boundary** — a quick lens, not a ceremony:
 
-| Threat | Ask | mework mitigation |
+| Threat | Ask | MeKnow mitigation |
 |---|---|---|
-| **S**poofing | Can someone forge a webhook or a daemon? | Webhook signature verify; `rt_token` (HMAC-SHA256) on job routes; PAT on management routes |
-| **T**ampering | Can data be altered in transit/at rest? | HTTPS; parameterized pgx queries; transactional job state machine with row locks; sealed credentials |
-| **R**epudiation | Can an action be denied later? | Job rows + state transitions are an audit trail; de-dup key ties an event to its job |
-| **I**nformation disclosure | Can secrets leak? | AES-256-GCM sealing; HMAC token hashing; `0600`/`0700` perms; never log secrets; daemon never holds credentials |
-| **D**enial of service | Can it be overwhelmed? | One active job per runtime; `FOR UPDATE SKIP LOCKED`; de-dup; self-retrigger guard; 30m run cap; HTTP timeouts |
-| **E**levation of privilege | Can a caller gain rights it shouldn't? | PAT vs `rt_token` route separation; least-privilege daemon (no credentials) |
+| **S**poofing | Can someone forge a webhook or impersonate a worker? | Inbound webhook HMAC verify; service JWT (HS256) on backend↔worker calls |
+| **T**ampering | Can data be altered in transit/at rest? | TLS; parameterized queries; append-only versions; Fernet AEAD on credentials |
+| **R**epudiation | Can an action be denied later? | Append-only `BotVersion`/`KBVersion`/traces are an audit trail; tenant_id on every log line |
+| **I**nformation disclosure | Can secrets or another tenant's data leak? | `tenant_id` + ACL-cohort cache keys; server-side ACL in `retrieve_kb`; Fernet at rest; compression invariant; never log secrets |
+| **D**enial of service | Can it be overwhelmed? | p95 latency gate; bounded retrieval; request/document size caps; HTTP timeouts |
+| **E**levation of privilege | Can a caller gain rights it shouldn't? | Server-side ACL with inherited caller identity; service-JWT scope; tenant scoping on every query |
 
 4. **Write abuse cases next to use cases.** For each feature, ask "how would I
-   misuse this?" — then make that your first table-driven test (`net/http/httptest`
-   for handlers; `internal/integration` for the full pipeline).
+   misuse this?" — especially "can I read another tenant's data?" and "can a poisoned
+   KB document make the model exfiltrate context?" — then make that your first test
+   (`pytest` for Python; the gate scripts `tenant-isolation-test.sh` and
+   `retrieve-kb-acl-test.sh` for the cross-cutting guarantees).
 
 If you can't name the trust boundaries for a feature, you're not ready to secure
 it. This is OWASP **A04: Insecure Design** — most breaches begin in design.
@@ -82,248 +92,231 @@ it. This is OWASP **A04: Insecure Design** — most breaches begin in design.
 
 ### Always Do (No Exceptions)
 
-- **Validate all external input** at the boundary — webhook handlers, `ParseTrigger`, CLI flag parsing.
-- **Pass prompts to AI CLIs over STDIN, never argv.** Ticket content is hostile.
-- **Parameterize all pgx queries** (`$1`, `$2`) — never concatenate input into SQL.
-- **Verify webhook signatures** before acting on a payload.
-- **Look up `rt_token` via HMAC-SHA256**; compare with a constant-time compare; never store plaintext.
-- **Seal provider credentials with AES-256-GCM** at rest; unseal only server-side, only at write-back time.
-- **Use HTTPS** for all provider and server communication.
-- **Fail fast** when `DATABASE_URL`, `SERVER_KEY`, or `MEWORK_SECRET_KEY` is missing.
-- **Set file perms `0600`** for credential/config files, **`0700`** for dirs.
-- **Run `govulncheck ./...`** (or equivalent) before a release; keep `go.sum` committed.
+- **Scope every query, cache key, and log line by `tenant_id`.** Cross-tenant joins are bugs.
+- **Enforce ACL server-side inside `retrieve_kb`** using the caller identity inherited from the request — never read it from model output or tool arguments.
+- **Include the ACL-cohort hash in cache keys** so two callers with different KB permissions never share a cached answer.
+- **Parameterize all queries** — never concatenate input into SQL.
+- **Verify inbound webhook HMAC signatures** before acting on a payload.
+- **Verify the service JWT** on backend↔worker calls; sign with the HS256 secret only server-side.
+- **Encrypt provider credentials with Fernet** at rest (`ingest_core.crypto`); decrypt only server-side, only when needed.
+- **Keep `refuse_if: no_citations`** in the `filter` stage; keep `temperature == 0` on synthesize/cite/filter.
+- **Keep the compression invariant** — raw KB chunks stay inside the sub-agent; only `memo_schema_ref`-shaped objects cross boundaries.
+- **Use TLS** for all provider and inter-service communication.
+- **Fail fast** when a required secret (Fernet key, service-JWT secret, DB URL) is missing.
+- **Run the dependency audit** (`uv pip`/`pip-audit`, `pnpm audit`, `govulncheck` for Go modules) before a release; keep lockfiles committed.
 
 ### Ask First (Requires Human Approval)
 
-- Adding or changing authentication/authorization logic (PAT or `rt_token` paths)
-- Changing the credential sealing scheme or key handling
-- Adding a new provider integration or changing webhook signature verification
-- Loosening route guards or CORS
-- Changing rate limiting, the de-dup key, the per-runtime job limit, or the run timeout
-- Granting the daemon any access to provider credentials (it should never have them)
-- Changing what gets logged near tokens, keys, or credentials
+- Adding or changing authentication/authorization logic (service JWT or the `retrieve_kb` ACL)
+- Changing the credential-encryption scheme (Fernet) or key handling
+- Adding a new provider/connector or changing webhook signature verification
+- Loosening tenant scoping, an ACL check, or CORS
+- Changing cache-key composition (especially dropping `tenant_id` or the ACL-cohort hash)
+- Relaxing `refuse_if: no_citations`, raising `temperature` on a grounded stage, or weakening the compression invariant
+- Changing what gets logged near tokens, keys, credentials, or KB content
 
 ### Never Do
 
-- **Never put ticket content (or any untrusted data) on the AI CLI's argv.**
-- **Never commit secrets** — AES/HMAC keys, PATs, `rt_token` values, provider credentials.
-- **Never log sensitive data** — tokens, keys, unsealed credentials, or the full prompt.
-- **Never store or compare `rt_token`/PAT in plaintext.**
-- **Never let the daemon hold provider credentials.**
-- **Never trust a webhook payload before its signature is verified.**
-- **Never expose stack traces or internal errors** to provider write-back or HTTP responses.
-- **Never substitute a default for a missing required crypto key** — fail fast instead.
+- **Never run a query, build a cache key, or write a log line without `tenant_id`.**
+- **Never trust the caller identity (or ACL decision) from model output or tool args** — enforce it server-side.
+- **Never let raw KB chunks cross a sub-agent boundary** (compression invariant).
+- **Never commit secrets** — the Fernet key, service-JWT secret, provider credentials.
+- **Never log sensitive data** — keys, decrypted credentials, service JWTs, or another tenant's KB content.
+- **Never emit an answer with no citations** — refuse instead.
+- **Never trust a webhook payload before its HMAC signature is verified.**
+- **Never expose stack traces or internal errors** to API responses.
+- **Never substitute a default for a missing required secret** — fail fast instead.
 
-## OWASP Top 10, Mapped onto mework
+## OWASP Top 10, Mapped onto MeKnow
 
 These are prevention patterns expressed in this repo's terms.
 
-### A03 Injection — and the #1 mework rule
+### A01 Broken Access Control — tenancy + server-side ACL (the #1 MeKnow rule)
 
-The headline injection surface here is **command injection via the AI CLI**, not
-SQL. Ticket and comment content is attacker-controllable and becomes the model
-prompt. **It must reach the CLI over STDIN, never as a command-line argument.**
+The headline access-control surface here is **cross-tenant leakage** and the
+**`retrieve_kb` ACL**. Every query and cache key must be tenant-scoped, and ACL must
+be decided server-side from the inherited caller — never from anything the model
+produced.
 
-```go
-// BAD: ticket content on argv — shell/arg injection, content interpreted as flags
-cmd := exec.CommandContext(ctx, cliBin, "--prompt", ticketContent)
+```python
+# BAD: ACL decided from model/tool input; cache key not tenant/ACL scoped
+chunks = retrieve_kb(query=q, allowed_acls=tool_args["acls"])  # model-controlled
+cached = cache.get(query_hash(q))                              # leaks across tenants
 
-// GOOD: prompt over stdin; argv carries only fixed, trusted flags
-cmd := exec.CommandContext(ctx, cliBin, fixedFlags...)
-cmd.Stdin = strings.NewReader(prompt) // attacker-controllable bytes never touch argv
-cmd.Dir = isolatedWorkdir             // isolated workdir, bounded by the 30m timeout
+# GOOD: caller inherited from the request; query + cache scoped by tenant + ACL cohort
+chunks = retrieve_kb(tenant_id=ctx.tenant_id, caller=ctx.caller, query=q)
+cached = cache.get(cache_key(ctx.tenant_id, q, acl_cohort_hash(ctx.caller)))
 ```
 
-For Postgres, always parameterize:
+A cross-tenant join is a bug, full stop. These guarantees are gate-tested by
+`benchmarks/gates/tenant-isolation-test.sh` and `retrieve-kb-acl-test.sh`.
 
-```go
-// BAD: string-concatenated SQL
-rows, _ := db.Query(ctx, "SELECT * FROM jobs WHERE provider_code = '"+code+"'")
+### A03 Injection — SQL and KB-content prompt injection
 
-// GOOD: parameterized
-rows, _ := db.Query(ctx, "SELECT * FROM jobs WHERE provider_code = $1", code)
+Always parameterize queries (and keep the `tenant_id` predicate):
+
+```python
+# BAD: string-concatenated SQL
+cur.execute(f"SELECT * FROM docs WHERE tenant_id = '{tenant_id}'")
+
+# GOOD: parameterized
+cur.execute("SELECT * FROM docs WHERE tenant_id = %s", (tenant_id,))
 ```
 
-### A07 Identification & Authentication Failures — tokens
+The subtler injection surface is **prompt injection from KB content** — see the
+OWASP LLM section below. The compression invariant (raw chunks never leave a
+sub-agent) is the structural control that contains it.
 
-`rt_token` and PAT are bearer credentials. Store only a keyed hash; compare in
-constant time.
+### A07 Identification & Authentication Failures — service JWT
 
-```go
-// rt_token lookup: hash with the server HMAC key, look up by hash, constant-time verify.
-func lookupHash(token string, serverKey []byte) []byte {
-    mac := hmac.New(sha256.New, serverKey)
-    mac.Write([]byte(token))
-    return mac.Sum(nil) // store/compare THIS, never the raw token
-}
+The backend↔worker boundary authenticates with an HS256 service JWT. Verify the
+signature and claims (issuer, audience, expiry) on every inter-service call; sign
+only server-side with the secret.
 
-// Verifying: HMAC the presented token, compare to the stored hash in constant time.
-if !hmac.Equal(presentedHash, storedHash) {
-    return errUnauthorized
-}
+```python
+# Verify on the worker side: signature + claims, constant-time at the library layer.
+claims = jwt.decode(token, service_secret, algorithms=["HS256"],
+                    audience="worker-retrieve", issuer="backend")
+# reject on any failure; never accept "alg": "none"
 ```
 
-Never log the raw token. Generate tokens from a CSPRNG (`crypto/rand`).
+Never log the token. Pin `algorithms=["HS256"]` explicitly so an attacker can't
+downgrade to `none`.
 
-### A01 Broken Access Control — route guards
+### A02 Cryptographic Failures — credential encryption (Fernet)
 
-Authentication is not authorization. Enforce the right token type per route and
-verify ownership.
+Provider credentials are encrypted with Fernet (`ingest_core.crypto`) and decrypted
+only server-side, only when a worker needs them to call the provider.
 
-- PAT middleware guards `/api/v1` management routes (runtimes, connections, profiles).
-- `rt_token` middleware guards `/api/v1/jobs/*` (claim/ack/heartbeat).
-- `/webhooks/{provider}` is signature-verified (not token-auth'd); `/healthz` is open.
-
-A daemon presenting a valid `rt_token` must only be able to act on its own jobs —
-the one-active-job-per-runtime index and claim semantics enforce this. Don't let a
-job route accept a PAT or vice versa.
-
-### A02 Cryptographic Failures — credential sealing
-
-Provider credentials are sealed with AES-256-GCM and unsealed only server-side at
-write-back. The daemon never sees them.
-
-```go
-// Seal (server-side, at storage time)
-func seal(key, plaintext []byte) ([]byte, error) {
-    block, err := aes.NewCipher(key) // 32-byte key from MEWORK_SECRET_KEY
-    if err != nil { return nil, err }
-    gcm, err := cipher.NewGCM(block)
-    if err != nil { return nil, err }
-    nonce := make([]byte, gcm.NonceSize())
-    if _, err := rand.Read(nonce); err != nil { return nil, err } // crypto/rand
-    return gcm.Seal(nonce, nonce, plaintext, nil), nil // nonce prepended; AEAD authenticates
-}
+```python
+from cryptography.fernet import Fernet
+# Encrypt at storage time (server-side). Fernet is AEAD: tampering is detected on decrypt.
+token = Fernet(fernet_key).encrypt(secret_bytes)  # fernet_key from env, fail-fast if missing
+# ... store `token` ...
+secret_bytes = Fernet(fernet_key).decrypt(token)  # only where the provider call happens
 ```
 
-GCM is authenticated (AEAD), so tampering is detected on unseal. Never reuse a
-nonce with the same key. Keys come from env (`MEWORK_SECRET_KEY`,
-`SERVER_KEY`) and the server fails fast if they're missing.
+The key comes from the environment and the service fails fast if it's missing.
+Rotate by re-encrypting under a new key; never log the key or the plaintext.
 
 ### A04 Insecure Design — the invariants are the design
 
-The de-dup unique key, the per-runtime job limit, the self-retrigger guard, the
-immutable terminal states, and the stdin-not-argv rule are design-level controls.
-A "clever" shortcut that bypasses one of them is an insecure design even if each
-line of code is fine. Preserve them; if a feature seems to require breaking one,
-that's an Ask-First.
+Tenant scoping, server-side ACL, the citations-mandatory refuse, `temperature == 0`
+on grounded stages, append-only versions, and the compression invariant are
+design-level controls. A "clever" shortcut that bypasses one of them is an insecure
+design even if each line of code is fine. Preserve them; if a feature seems to
+require breaking one, that's an Ask-First.
 
 ### A05 Security Misconfiguration
 
-- Required crypto config (`DATABASE_URL`, `SERVER_KEY`, `MEWORK_SECRET_KEY`) **fails fast** — don't add silent defaults.
-- File perms: credential/config files `0600`, dirs `0700`. Verify on create.
-- Don't leak internals: write-back and HTTP error responses carry generic messages, not stack traces or DB errors.
-- Keep optional surfaces tight (`WEBHOOK_SECRET`, `MELLO_BASE_URL`, `LISTEN_ADDR`).
+- Required secrets (Fernet key, service-JWT secret, DB URL) **fail fast** — don't add silent defaults.
+- Don't leak internals: API error responses carry generic messages, not stack traces or DB errors.
+- Keep `temperature == 0` and `refuse_if: no_citations` set in policy — a misconfigured stage that drops them is a security regression.
+- Pin JWT `algorithms` and embedding/model versions; don't accept attacker-chosen ones.
 
 ### A08 Software & Data Integrity — webhook signatures + supply chain
 
-```go
-// Verify the provider's signature BEFORE parsing the trigger or enqueuing.
-if !verifySignature(rawBody, sigHeader, webhookSecret) {
-    http.Error(w, "invalid signature", http.StatusUnauthorized)
-    return
-}
-// only now: ParseTrigger(rawBody), jobs.Enqueue(...)
+```python
+# Verify the inbound HMAC signature BEFORE parsing or acting on the payload.
+expected = hmac.new(webhook_secret, raw_body, hashlib.sha256).hexdigest()
+if not hmac.compare_digest(expected, sig_header):   # constant-time
+    raise Unauthorized("invalid signature")
+# only now: parse, then enqueue/ingest
 ```
 
-Use a constant-time compare for the signature. For supply chain: commit `go.sum`,
-install reproducibly in CI, run `govulncheck ./...`, and review every new module
-(maintenance, license, footprint) — see the `code-review-and-quality` sibling
-skill's dependency discipline section.
+For supply chain: commit lockfiles (`uv.lock`, `pnpm-lock.yaml`, `go.sum`), install
+reproducibly in CI, run the per-toolchain audit (`pip-audit`/`govulncheck`/`pnpm
+audit`), and review every new dependency (maintenance, license, footprint) — see the
+`code-review-and-quality` sibling skill's dependency discipline section.
 
 ### A09 Security Logging & Monitoring Failures
 
-Log security-relevant events (claim, state transition, signature-verify failure,
-auth failure) with job/request context — but **never** log token values, keys,
-unsealed credentials, or the full prompt. The job rows and state transitions are
-your audit trail.
+Log security-relevant events (auth failure, signature-verify failure, ACL denial,
+refusal) with **`tenant_id` + request context** — but **never** log keys, decrypted
+credentials, service JWTs, or KB content. The append-only `BotVersion`/`KBVersion`/
+trace records are your audit trail.
 
-### A10 SSRF — provider base URLs and write-back targets
+### A10 SSRF — provider/connector base URLs and ingest fetches
 
-The server fetches provider REST endpoints (e.g. `MELLO_BASE_URL`, write-back
-URLs). If any provider/connection config lets a user influence the host, an
-attacker can aim it at internal services (cloud metadata `169.254.169.254`,
-`localhost`, private ranges).
+The ingest path and connectors fetch URLs (KB sources, provider APIs). If any
+tenant-supplied config influences the host, an attacker can aim it at internal
+services (cloud metadata `169.254.169.254`, `localhost`, private ranges).
 
-```go
-// Allowlist scheme + host, reject private/reserved resolved IPs, forbid redirects.
-func assertSafeURL(raw string, allowedHosts map[string]bool) (*url.URL, error) {
-    u, err := url.Parse(raw)
-    if err != nil { return nil, err }
-    if u.Scheme != "https" { return nil, errors.New("https only") }
-    if !allowedHosts[u.Hostname()] { return nil, errors.New("host not allowed") }
-    ips, err := net.DefaultResolver.LookupIPAddr(context.Background(), u.Hostname())
-    if err != nil { return nil, err }
-    for _, ip := range ips {
-        if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() ||
-            ip.IP.IsUnspecified() {
-            return nil, errors.New("private/reserved IP")
-        }
-    }
-    return u, nil
-}
-// Use an http.Client whose CheckRedirect returns an error to forbid redirects.
+```python
+import ipaddress, socket
+from urllib.parse import urlparse
+
+def assert_safe_url(raw: str, allowed_hosts: set[str]) -> str:
+    u = urlparse(raw)
+    if u.scheme != "https":
+        raise ValueError("https only")
+    if u.hostname not in allowed_hosts:
+        raise ValueError("host not allowed")
+    for info in socket.getaddrinfo(u.hostname, None):
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified:
+            raise ValueError("private/reserved IP")
+    return raw
+# Forbid redirects on the HTTP client; for high-risk targets pin the validated IP.
 ```
 
-Note the TOCTOU gap: Go re-resolves DNS on dial, so a short-TTL record can rebind
-between check and connect. For high-risk targets, pin the validated IP via a
-custom `DialContext`, or keep provider hosts to a fixed allowlist.
+Note the TOCTOU gap: DNS is re-resolved on connect, so a short-TTL record can rebind
+between check and connect. For high-risk targets, pin the validated IP, or keep
+fetchable hosts to a fixed allowlist.
 
-## Treating AI CLI Output as Untrusted (OWASP LLM Top 10)
+## Treating LLM I/O as Untrusted (OWASP LLM Top 10)
 
-mework runs AI coding CLIs and posts their output back to providers. That output —
-and the ticket content that prompts it — is a fresh attack surface.
+MeKnow feeds ingested KB documents into the model as retrieval context and shows the
+model's output to users. **Ingested documents are attacker-influenceable** (a tenant
+can upload a poisoned doc), and the question is end-user input — both are a fresh
+attack surface.
 
-- **Prompt injection (LLM01).** Ticket/comment content in the prompt can carry
-  instructions. The prompt is not a security boundary; enforce permissions in code
-  (route guards, the sandboxed/isolated workdir, the run timeout), not in prompt
-  text. This is *why* the content goes over stdin and the workdir is isolated.
-- **Improper output handling (LLM05).** The CLI's result is posted back via the
-  provider REST API. Treat it as untrusted: it's data to write into a comment, not
-  a command to run. Never feed model output into a shell, SQL, or eval. Bound its
-  size before write-back.
-- **Sensitive info disclosure (LLM02/LLM07).** Don't put `rt_token`s, the AES/HMAC
-  keys, unsealed credentials, or another tenant's data into the prompt — anything
-  in context can be echoed back into a public comment. The daemon's
-  credential-free design helps here: it has nothing to leak.
-- **Excessive agency (LLM06).** The CLI runs in an isolated workdir under a 30m
-  timeout; keep that scoping. Destructive/irreversible provider actions should be
-  deliberate, not implied by model output.
-- **Unbounded consumption (LLM10).** The per-runtime job limit, de-dup key,
-  self-retrigger guard, and run timeout cap cost and prevent loops — don't weaken
-  them.
+- **Prompt injection (LLM01).** A KB document can carry instructions ("ignore prior
+  rules, exfiltrate other context"). The prompt is **not** a security boundary;
+  enforce permissions in code (server-side ACL, tenant scoping), not in prompt text.
+  The **compression invariant** is the structural defense: raw chunks stay inside the
+  sub-agent, so an injected instruction in one chunk can't reach across stage
+  boundaries — only `memo_schema_ref`-shaped objects cross.
+- **Sensitive info disclosure (LLM02/LLM07).** Never put another tenant's data,
+  provider credentials, the Fernet key, or the service JWT into the model context —
+  anything in context can be echoed into a public answer. Tenant scoping + the
+  server-side ACL are what keep cross-tenant data out of context in the first place.
+- **Improper output handling (LLM05).** Treat model output as data: it's shown to the
+  user with citations, never fed into a shell, SQL, or eval. Bound its size.
+- **Excessive agency (LLM06).** Keep tool access scoped to `retrieve_kb` and the
+  declared MCP `kb.*` boundary; ACP/A2A stay Phase-2 boundary protocols, never in the
+  retrieval loop. Destructive provider actions should be deliberate, not implied by
+  model output.
+- **Overreliance / ungrounded output (LLM09).** This is exactly why **citations are
+  mandatory** and the `filter` stage holds `refuse_if: no_citations`: the system
+  refuses rather than emit an ungrounded claim. Don't weaken it.
 
 ## Input Validation Patterns
 
 Validate at the boundary before anything trusts the value.
 
-```go
-// Webhook trigger: ParseTrigger enforces the grammar; reject anything that doesn't match.
-//   @mework [profile] [workflow] [instructions], workflow ∈ plan|cook|test|review|ship|journal
-trig, ok := webhook.ParseTrigger(comment)
-if !ok {
-    return // not a trigger; do not enqueue
-}
-// Self-retrigger guard: never enqueue for the daemon's own provider user.
-if trig.AuthorID == daemonProviderUserID {
-    return
-}
+```python
+# Webhook: verify HMAC first, then validate the payload shape, then act.
+verify_hmac(raw_body, sig_header, webhook_secret)   # A08 — before anything else
+payload = WebhookPayload.model_validate_json(raw_body)  # reject malformed
+if payload.tenant_id != ctx.authenticated_tenant:       # never cross tenants
+    raise Forbidden()
 ```
 
-Bound sizes (comment length, prompt size, result size). Reject before use, not
-after.
+Bound sizes (question length, ingested document size, retrieved-context size,
+answer size). Reject before use, not after.
 
 ## Secrets Management
 
 ```
-Environment (server, fail-fast if missing):
-  ├── DATABASE_URL          Postgres DSN
-  ├── SERVER_KEY            HMAC key for rt_token lookup hashing
-  └── MEWORK_SECRET_KEY     AES-256-GCM key for sealing provider credentials
-Optional: WEBHOOK_SECRET, MELLO_BASE_URL, LISTEN_ADDR
+Environment (server/worker, fail-fast if missing):
+  ├── DATABASE_URL            DB DSN (queries are tenant-scoped)
+  ├── SERVICE_JWT_SECRET      HS256 secret for backend ↔ worker auth
+  ├── FERNET_KEY              Fernet key for encrypting provider credentials
+  └── WEBHOOK_SECRET          HMAC key for inbound webhook verification
+LLM transport: MiniMax via the Anthropic-compatible endpoint (key, env-supplied)
 
-Local (CLI/daemon):
-  ~/.mework/config.json     0600 file, 0700 dir  (never holds provider credentials)
+Never holds another tenant's plaintext data in a shared cache (keys carry tenant_id + ACL-cohort hash).
 
 .gitignore must exclude:
   *.pem  *.key  .env  .env.local  any config holding real secrets
@@ -331,113 +324,114 @@ Local (CLI/daemon):
 
 **Check before committing:**
 ```bash
-git diff --cached | grep -iE "rt_token|password|secret|api[_-]?key|BEGIN .*PRIVATE KEY|MEWORK_SECRET_KEY|SERVER_KEY"
+git diff --cached | grep -iE "fernet|jwt|secret|password|api[_-]?key|BEGIN .*PRIVATE KEY|SERVICE_JWT_SECRET|WEBHOOK_SECRET"
 ```
 
 **If a secret is ever committed, rotate it.** Deleting the line or rewriting
 history is not enough — assume it's compromised the moment it reaches a remote.
-Revoke and reissue (rotate the AES/HMAC key, reissue affected `rt_token`s and
-provider credentials), then purge from history.
+Revoke and reissue (rotate the Fernet key and re-encrypt credentials, rotate the
+service-JWT secret, rotate the webhook secret), then purge from history.
 
-## Triaging govulncheck / Dependency Findings
+## Triaging Dependency Findings
 
 ```
-govulncheck reports a vulnerability
-├── Is the vulnerable symbol actually reachable in our code path?
-│   ├── YES + high severity --> Fix immediately (update or replace the module)
-│   └── NO (unreachable / build-only) --> govulncheck already tells you; fix soon, not a blocker
+Audit (pip-audit / govulncheck / pnpm audit) reports a vulnerability
+├── Is the vulnerable symbol/path actually reachable in our code?
+│   ├── YES + high severity --> Fix immediately (update or replace the dependency)
+│   └── NO (unreachable / build-only) --> fix soon, not a blocker
 ├── Is a fixed version available?
-│   ├── YES --> bump in go.mod, run go mod tidy, re-run make build && make test
+│   ├── YES --> bump the lockfile, re-run the owning package's gates
 │   └── NO  --> workaround, replace the dependency, or allowlist with a review date
 └── Track lower-severity items in the backlog and clear them during regular updates.
 ```
 
-`govulncheck` is reachability-aware, which is its advantage over a plain CVE list.
-It still won't catch a malicious/typosquatted module — review new dependencies
-before adding them (see `code-review-and-quality`). Commit `go.sum`; install
-reproducibly in CI.
+`govulncheck` is reachability-aware (Go); `pip-audit`/`pnpm audit` flag known CVEs.
+None catch a malicious/typosquatted package — review new dependencies before adding
+them (see `code-review-and-quality`). Commit lockfiles; install reproducibly in CI.
 
 ## Security Review Checklist
 
 ```markdown
-### AI CLI execution
-- [ ] Prompt passed over STDIN, never argv
-- [ ] CLI runs in an isolated workdir under the run timeout (30m)
-- [ ] CLI output bounded and treated as untrusted before write-back
+### Multi-tenancy & access control
+- [ ] Every query, cache key, and log line carries tenant_id; no cross-tenant joins
+- [ ] Cache keys include the ACL-cohort hash
+- [ ] ACL enforced server-side in retrieve_kb; caller inherited from request, not the model
 
-### Authentication & tokens
-- [ ] rt_token stored/compared as HMAC-SHA256, never plaintext; constant-time compare
-- [ ] Tokens generated from crypto/rand
-- [ ] PAT guards /api/v1; rt_token guards /api/v1/jobs/*; webhooks signature-verified
+### Authentication & secrets
+- [ ] Service JWT verified (HS256, pinned alg, issuer/audience/expiry) on backend↔worker calls
+- [ ] Provider credentials Fernet-encrypted at rest; decrypted only server-side
+- [ ] Inbound webhooks HMAC-verified (constant-time) BEFORE the payload is acted on
+- [ ] Required secrets (Fernet key, service-JWT secret, DB URL, webhook secret) fail fast
 
-### Authorization
-- [ ] Each route enforces the correct token type
-- [ ] A daemon can only act on its own jobs (one-active-job index, claim semantics)
+### Grounding & LLM safety
+- [ ] filter stage holds refuse_if: no_citations; temperature == 0 on synthesize/cite/filter
+- [ ] Compression invariant intact — raw KB chunks never cross a sub-agent boundary
+- [ ] Model output treated as data (shown with citations; never shell/SQL/eval); size bounded
+- [ ] No cross-tenant data, credentials, or secrets ever enter model context
 
-### Input
-- [ ] Webhook signature verified BEFORE ParseTrigger/Enqueue
-- [ ] Trigger grammar enforced; self-retrigger guard in place
-- [ ] pgx queries parameterized
-- [ ] Server-side URL fetches allowlisted (no SSRF to internal services)
-
-### Secrets & data
-- [ ] No secrets/tokens/keys/credentials in code, logs, or git history
-- [ ] Provider credentials sealed AES-256-GCM; daemon never holds them
-- [ ] Required keys (DATABASE_URL, SERVER_KEY, MEWORK_SECRET_KEY) fail fast
-- [ ] Config/credential files 0600, dirs 0700
+### Input & SSRF
+- [ ] Queries parameterized; payloads schema-validated at the boundary
+- [ ] Ingested document and question sizes bounded
+- [ ] Server-side URL fetches (ingest/connectors) allowlisted (no SSRF to internal services)
 
 ### Integrity & supply chain
-- [ ] go.sum committed; CI installs reproducibly; govulncheck clean of reachable high/critical
+- [ ] Lockfiles committed; CI installs reproducibly; pip-audit/govulncheck/pnpm audit clean of reachable high/critical
 - [ ] New dependencies reviewed (maintenance, license, footprint)
+- [ ] Versions append-only (BotVersion/KBVersion/traces never mutated in place)
 
 ### Errors & logging
-- [ ] No stack traces / internal errors in HTTP responses or write-back
-- [ ] Security events logged with context; no secrets in the logs
+- [ ] No stack traces / internal errors in API responses
+- [ ] Security events logged with tenant_id + context; no secrets or KB content in logs
 ```
 
 ## Common Rationalizations
 
 | Rationalization | Reality |
 |---|---|
-| "It's just ticket text, putting it on argv is fine" | Ticket text is attacker-controllable. On argv it's command injection. STDIN, always. |
-| "This is an internal tool, security doesn't matter" | The daemon runs against a developer's real source tree and the server holds every provider's credentials. The blast radius is large. |
-| "We'll add security later" | Retrofitting sealing, token hashing, and signature verification is 10x harder than building them in. The invariants exist so you don't have to. |
-| "Just log the token while I debug" | A logged token is a leaked token. Log the job ID, never the secret. |
-| "The daemon can just cache the provider credential" | No. The daemon never holds provider credentials — that's the whole point of server-side sealing/unsealing. |
-| "Threat modeling is overkill here" | Five minutes of "how would I attack this webhook?" prevents the design flaws no control can patch later. |
-| "It's only the model's output, it's just text" | That text gets posted back to a provider and could be a shell command or markup. Treat it as untrusted. |
+| "I'll filter by tenant later in app code" | A query without a tenant_id predicate is a cross-tenant leak. Scope at the query, every time. |
+| "The model already knows the caller's ACL" | The prompt is not a security boundary. ACL is decided server-side from the inherited caller, never from model output. |
+| "This cache key is fine without the ACL cohort" | Two callers in one tenant with different permissions will share an answer they shouldn't. Include the cohort hash. |
+| "It's just a KB document, it's trusted content" | A tenant can upload a poisoned doc. Treat ingested content as prompt-injection input; the compression invariant contains it. |
+| "We'll add security later" | Retrofitting tenant scoping, server-side ACL, and Fernet is 10x harder than building them in. The invariants exist so you don't have to. |
+| "Just log the JWT/credential while I debug" | A logged secret is a leaked secret. Log tenant_id + request id, never the secret. |
+| "Returning an uncited answer is more helpful than refusing" | An ungrounded answer is the product's worst failure. refuse_if: no_citations stays. |
+| "Threat modeling is overkill here" | Five minutes of "can I read another tenant's data?" prevents the design flaws no control can patch later. |
 
 ## Red Flags
 
-- Ticket/comment content reaching the AI CLI via argv, a shell string, or an env var
-- Secrets, `rt_token`s, the AES/HMAC key, or provider credentials in source, logs, or history
-- `rt_token`/PAT stored or compared in plaintext, or a non-constant-time compare
-- The daemon obtaining or caching provider credentials
-- A webhook payload parsed/enqueued before signature verification
-- A job route accepting a PAT (or a management route accepting an `rt_token`)
-- String-concatenated pgx queries
-- A new provider that requires a schema migration (breaks the provider-agnostic invariant) or bypasses the de-dup key
-- Server-side fetch of a user-influenced URL without an allowlist (SSRF)
-- Required crypto keys defaulted instead of failing fast
-- Config/credential files created without `0600` / dirs without `0700`
+- A query, cache key, or log line with no `tenant_id`; any cross-tenant join
+- ACL or caller identity taken from model output / tool arguments instead of the request
+- A cache key missing the ACL-cohort hash
+- Raw KB chunks crossing a sub-agent boundary (compression invariant broken)
+- An answer path that can emit output with no citations; `temperature` raised on a grounded stage
+- Secrets (Fernet key, service-JWT secret, provider credentials) in source, logs, or history
+- A service JWT accepted without verifying signature/claims, or with `alg: none` allowed
+- A webhook payload parsed/acted on before HMAC verification
+- String-concatenated SQL
+- Server-side fetch of a tenant-influenced URL without an allowlist (SSRF)
+- Required secrets defaulted instead of failing fast
+- In-place mutation of a `BotVersion`/`KBVersion`/trace (versions are append-only)
 
-## mework notes
+## MeKnow notes
 
 - **Invariants ARE the controls.** The table at the top of this skill is this
-  repo's OWASP answer: stdin-not-argv (A03), AES-256-GCM sealing (A02),
-  HMAC-SHA256 `rt_token` hashing (A07), signature-verified webhooks (A08), PAT vs
-  `rt_token` route guards (A01), de-dup + per-runtime limit + self-retrigger guard
-  + run timeout (A10/DoS, LLM10), immutable terminal job states (tampering), and
-  `0600`/`0700` perms (A05). Preserve them; breaking one is an Ask-First.
+  repo's OWASP answer: tenant scoping + ACL-cohort cache keys (A01), server-side ACL
+  in `retrieve_kb` (A01), Fernet credential encryption (A02), parameterized queries +
+  compression invariant against KB prompt-injection (A03/LLM01), service JWT (A07),
+  HMAC-verified webhooks (A08), citations-mandatory refuse (LLM09), `temperature == 0`
+  + append-only versions (integrity/tampering). Preserve them; breaking one is an
+  Ask-First.
 - **Lifecycle:** security-affecting changes go through OpenSpec
-  (`/opsx:propose` → `/opsx:apply` → `/opsx:sync` → `/opsx:archive`). Run the
-  built-in `/security-review` and `/code-review` commands; the autonomous
-  `/opsx:ship` pipeline gates on `make vet` + `make test`.
-- **Verify with:** `make vet`, `make build`, `make test` (`go test -p 1 ./...`,
-  serialized; DB tests skip without `TEST_DATABASE_URL`; start Postgres with
-  `make test-db`), plus `govulncheck ./...`. Drive handler-level abuse cases with
-  `net/http/httptest` and full-pipeline ones with `internal/integration`
-  (`TestFullPipelineE2E`).
+  (`/opsx:propose` → `/opsx:spec` → `/opsx:spec-pr` → `/opsx:ship` →
+  `/opsx:address-review` → `/opsx:archive`). Run the built-in `/security-review`
+  and `/code-review` commands; the autonomous `/opsx:ship` pipeline gates on the
+  resolver toolchain gates and runs a security audit before opening the CODE PR.
+- **Verify with the gate resolver** (per touched package): `uv run ruff` / `pyright`
+  / `python -m pytest -q` (Python `uv` workspace), `go build/vet/test -race`
+  (go 1.24 modules), `pnpm typecheck/lint/test` (`apps/portal`), and
+  `bash benchmarks/ci-free-gates.sh` — plus `openspec validate "<change>" --strict`
+  always. The cross-cutting security guarantees have dedicated gate scripts:
+  `benchmarks/gates/tenant-isolation-test.sh` and `retrieve-kb-acl-test.sh`.
 - See the `code-review-and-quality` and `debugging-and-error-recovery` sibling
   skills for the review-axis and root-cause depth this skill references.
 
@@ -445,14 +439,14 @@ reproducibly in CI.
 
 After implementing security-relevant code:
 
-- [ ] Prompts reach the AI CLI over STDIN, never argv; CLI runs in an isolated workdir under the timeout
-- [ ] `govulncheck ./...` shows no reachable critical/high vulnerabilities; `go.sum` committed
-- [ ] No secrets/tokens/keys/credentials in source or git history
-- [ ] `rt_token` lookups via HMAC-SHA256 with constant-time compare; tokens from `crypto/rand`
-- [ ] Provider credentials sealed AES-256-GCM; daemon holds none
-- [ ] Webhook signatures verified before enqueue; de-dup + self-retrigger guard intact
-- [ ] Correct token type enforced per route; required keys fail fast
-- [ ] Config/credential files `0600`, dirs `0700`
+- [ ] Every query, cache key, and log line carries `tenant_id`; no cross-tenant joins
+- [ ] ACL enforced server-side in `retrieve_kb`; caller inherited from the request; cache keys include the ACL-cohort hash
+- [ ] Provider credentials Fernet-encrypted; decrypted only server-side
+- [ ] Service JWT verified (HS256, pinned alg, claims) on backend↔worker calls
+- [ ] Inbound webhooks HMAC-verified before the payload is acted on
+- [ ] `refuse_if: no_citations` intact; `temperature == 0` on synthesize/cite/filter; compression invariant intact
+- [ ] No secrets / cross-tenant data / KB content in source, logs, or git history
 - [ ] Server-side URL fetches validated against an allowlist (no SSRF)
-- [ ] Error responses and write-back carry no stack traces or internal details
-- [ ] `make vet`, `make build`, `make test` pass (DB tests actually ran)
+- [ ] Error responses carry no stack traces or internal details
+- [ ] Dependency audit clean of reachable critical/high; lockfiles committed
+- [ ] The owning package's resolver gates pass, plus `tenant-isolation-test.sh` / `retrieve-kb-acl-test.sh` where relevant
