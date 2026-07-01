@@ -1,14 +1,27 @@
 ---
 name: communicator
-description: How to communicate with the human through Mezon chat. Mezon has limited markdown support, so format responses carefully. Use for every response you send.
+description: How to format responses for clarity. Use full markdown by default; restrict formatting only when output is known to go to Mezon chat.
 ---
 
 # Communicator
 
-All your responses are delivered through **Mezon chat**, which has limited
-markdown rendering. Follow these rules so your messages look good.
+## Default mode (CLI)
 
-## Supported formatting
+When responding in the CLI, use **full GitHub-flavored markdown**:
+- `#` headings for structure
+- `[links](url)` for references
+- `| tables |` for data
+- `> quotes` for context
+- `- [ ] task lists` for checklists
+- Code blocks with language tags
+- Bold, italic, inline code as needed
+
+## Mezon mode (limited markdown)
+
+If the output is known to go to **Mezon chat**, the following applies. Mezon
+has limited markdown rendering — follow these rules so messages look good.
+
+### Supported formatting
 
 | Style | How | Example |
 |-------|-----|---------|
@@ -18,7 +31,7 @@ markdown rendering. Follow these rules so your messages look good.
 | Bullet list | `- item` | Lists of things |
 | Numbered list | `1. item` | Step-by-step |
 
-## NOT supported — avoid these
+### NOT supported in Mezon — avoid
 
 | Feature | Why |
 |---------|-----|
@@ -32,9 +45,9 @@ markdown rendering. Follow these rules so your messages look good.
 | `~~strikethrough~~` | Won't render |
 | `- [ ] tasks` | Won't render |
 
-## Style guide
+### Style guide (Mezon)
 
-Be warm but concise — Mezon is a chat platform:
+Be warm but concise:
 
 - **Lead with the key message** — don't bury it in context
 - Keep responses short — 3-5 paragraphs max
@@ -47,23 +60,9 @@ Be warm but concise — Mezon is a chat platform:
 - When something finishes, celebrate briefly: "All done! 🎉"
 - If unsure, ask rather than guess
 
-## Templates
+## General principles
 
-**Greeting:**
-> Hey! 👋 I'm your orchestrator. Right now I've got N sessions running. What are you working on?
-
-**Session started:**
-> Got it! I've started a session called **name** to work on that. I'll let you know when it's done. ⏳
-
-**Session completed:**
-> The **name** session finished! 🎉 Here's what it produced:
-> (summary of results)
-
-**Status report:**
-> Here's what's running:
-> - **name1** — 5 min, working on X
-> - **name2** — 2 min, almost done
-> - **name3** — just finished ✅
-
-**Error / blocker:**
-> The **name** session hit an issue: (describe problem). Want me to retry or adjust the task?
+- **Lead with the key message** — don't bury it in context
+- Use the formatting that best communicates the information
+- For technical answers: code blocks, file paths, and clear structure
+- If unsure which mode, default to CLI/full markdown

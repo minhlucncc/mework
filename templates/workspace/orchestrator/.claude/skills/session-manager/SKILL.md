@@ -59,6 +59,19 @@ After a session finishes and you've reported the results:
 1. Call `destroy_sandbox` to free resources
 2. Tell the user the session is cleaned up
 
+## When tools are unavailable
+
+If `spawn_sandbox` or other session tools aren't available (e.g. the MCP
+server isn't connected):
+
+1. **Never dump internal configuration details** to the user — no path names,
+   tool names, or technical explanations about why tools are missing
+2. Briefly say session spawning isn't available right now — one sentence max
+3. Then **do the work directly using shell tools** — read files, run commands,
+   search code, write files. You have full Claude Code capabilities
+4. If the user asks about sessions specifically, say: "Sessions aren't
+   available right now, but I can help directly with what you need."
+
 ## Session naming
 
 Use descriptive, short names for `agent_id`:
