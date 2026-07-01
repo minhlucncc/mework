@@ -13,15 +13,23 @@ All state is in-memory or on the local filesystem.
 The system SHALL provide a `mework start --workspace <dir> --offline` command
 that boots a self-contained local agent process. The agent SHALL resolve its
 definition from `<dir>/mework.yml` using a file-system resolver, start the
-sandbox (local engine), and listen for one-shot task submissions via the CLI.
-The command SHALL fail with a clear error when `--workspace` is missing.
+sandbox (local engine) with AccessTier `observer`, and listen for one-shot task
+submissions via the CLI. The command SHALL fail with a clear error when
+`--workspace` is missing.
 
-#### Scenario: Start offline agent with valid workspace
+#### Scenario: Start offline agent with valid workspace — observer tier
 - **WHEN** user runs `mework start --workspace /tmp/my-workspace --offline`
 - **THEN** the agent reads `/tmp/my-workspace/mework.yml` for the agent definition
-- **THEN** the agent starts the local sandbox with the configured backend
+- **AND** the agent starts the local sandbox with AccessTier `observer`
+- **AND** `SandboxCaps().AccessTier` returns `observer`
 - **THEN** the agent prints its status and waits for task submissions
 - **THEN** the agent stays running until a `mework stop` or SIGINT/SIGTERM
+
+#### Scenario: Observer-tier offline agent scopes working directory
+
+- **WHEN** the offline agent starts with AccessTier `observer`
+- **THEN** the sandbox working directory is bound to the workspace directory
+- **AND** the sandbox CLAUDE.md includes observer-mode guidance
 
 #### Scenario: Start offline agent without workspace
 - **WHEN** user runs `mework start --offline` without `--workspace`

@@ -41,18 +41,28 @@ The MCP server SHALL expose five sandbox lifecycle tools: `spawn_sandbox`,
 `get_sandbox_status`, `list_child_sandboxes`, `destroy_sandbox`, and
 `wait_for_sandbox`. These SHALL call the existing `ports.SandboxDriver` /
 `sandbox/runtime.Manager` interfaces and track child sandboxes in an in-memory
-registry scoped to the MCP server process.
+registry scoped to the MCP server process. When `RealSandboxManager.Start()` is
+called to create a child sandbox, it SHALL set `RunSpec.AccessTier` to `worker`
+so that spawned workers get full read-write access within the workspace. The
+caller MUST NOT be able to override the tier for spawned children through the
+MCP tool parameters.
 
 #### Scenario: Spawn a child sandbox asynchronously
 
 - **WHEN** `spawn_sandbox` is called with a required `prompt` string,
   `agent_id` string, and optional `image`, `timeout_minutes`, `workspace_path`,
   and `env_vars`
-- **THEN** a new sandbox starts via the runtime manager's `Start()` method
+- **THEN** a new sandbox starts via the runtime manager's `Start()` method with
+  AccessTier `worker`
 - **AND** a non-empty `sandbox_id` is returned immediately (before the child
   completes)
 - **AND** the prompt is fed to the child over stdin (not argv), preserving the
   stdin-not-argv invariant
+
+#### Scenario: Spawned sandbox has full filesystem access
+
+- **WHEN** a child sandbox is created with AccessTier `worker`
+- **THEN** the sandbox has read-write access within its workspace directory
 
 #### Scenario: Poll child sandbox status
 

@@ -21,6 +21,10 @@ workspace as a worker — `sandbox start`, `sandbox list`, `sandbox stop`,
 show/set`; `provider connect`; `version`). Read commands SHALL support
 `--json` output.
 
+When invoked with `--offline`, `mework daemon start` SHALL create the
+orchestrator sandbox with AccessTier `observer`. The `sandbox start` command
+SHALL report the AccessTier of the created child sandbox.
+
 The poll-oriented `runtime register` / claim framing is replaced by
 `runner enroll`.
 
@@ -73,6 +77,30 @@ unchanged.
 
 - **WHEN** the user runs `mework daemon start --offline --with-mezon --workspace <dir>` with valid Mezon credentials
 - **THEN** the CLI accepts the flag combination and the offline-stack orchestrator runs
+
+### Requirement: Observer tier enforces cwd scoping
+
+The local engine SHALL bind the sandbox working directory to the configured
+workspace path when the orchestrator starts with AccessTier `observer` via
+`mework daemon start --offline`. The local engine SHALL NOT enforce OS-level
+command filtering for the observer tier; the agent SHALL be instructed to
+self-restrict via CLAUDE.md observer-mode guidance. The sandbox SHALL report
+the AccessTier through `SandboxCaps()`.
+
+#### Scenario: Observer sandbox working directory is workspace-bound
+
+- **WHEN** the orchestrator sandbox starts with AccessTier `observer`
+- **THEN** the sandbox working directory is set to the workspace directory
+- **AND** `SandboxCaps().AccessTier` returns `observer`
+
+#### Scenario: Observer sandbox does not filter OS commands
+
+- **WHEN** `Exec("rm -rf /")` is called on an observer-tier sandbox in the
+  local engine
+- **THEN** the command executes (the local engine does not implement OS-level
+  filtering)
+- **AND** the sandbox CLAUDE.md provides observer-mode guidance instructing
+  read-only behavior
 
 #### Scenario: Start the hub in-process
 
