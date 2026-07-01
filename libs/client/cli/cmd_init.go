@@ -11,7 +11,7 @@ import (
 )
 
 var initWorkspace string
-var initProvider string
+var initAgent string
 var initBackend string
 var initName string
 
@@ -21,11 +21,11 @@ var initCmd = &cobra.Command{
 	Long: `Initialize a directory as a mework workspace.
 
 Creates mework.yml, CLAUDE.md, .claude/settings.json with MCP config,
-and optional .claude/skills/ and .claude/commands/ based on the provider (mezon).
+and optional .claude/skills/ and .claude/commands/ for the specified AI agent.
 
 Examples:
   mework init --workspace . --name mybot
-  mework init --workspace ./my-project --provider mezon
+  mework init --workspace ./my-project --agent claude
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := initWorkspace
@@ -37,16 +37,16 @@ Examples:
 			return fmt.Errorf("resolve path: %w", err)
 		}
 
-		// Find the template.
-		tmplDir := findWorkspaceTemplate("orchestrator")
-		if tmplDir == "" {
-			return fmt.Errorf("template not found")
-		}
-
-		// Copy template files.
+		// Copy both orchestrator and worker templates into .mework/.
 		mcpBin := resolveMCPBinPath()
-		if err := copyWorkspaceTemplate(tmplDir, absDir, mcpBin); err != nil {
-			return fmt.Errorf("copy template: %w", err)
+		for _, role := range []string{"orchestrator", "worker"} {
+			tmplDir := findWorkspaceTemplate(role)
+			if tmplDir != "" {
+				dstDir := absDir + "/.mework/" + role
+				if err := copyWorkspaceTemplate(tmplDir, dstDir, mcpBin); err != nil {
+					return fmt.Errorf("copy %s template: %w", role, err)
+				}
+			}
 		}
 
 		// Create mework.yml at root.
@@ -78,7 +78,7 @@ role: %s
 		}
 
 		fmt.Printf("mework workspace initialized: %s\n", absDir)
-		fmt.Printf("  provider: mezon\n")
+		fmt.Printf("  agent:    %s\n", initAgent)
 		fmt.Printf("  backend:  %s\n", initBackend)
 		fmt.Printf("  commands: /sessions, /spawn, /status, /stop\n")
 		fmt.Println()
@@ -173,7 +173,7 @@ func copyWorkspaceTemplate(src, dst, mcpBin string) error {
 
 func init() {
 	initCmd.Flags().StringVar(&initWorkspace, "workspace", "", "Target directory (default: current dir)")
-	initCmd.Flags().StringVar(&initProvider, "provider", "mezon", "Provider: mezon (default)")
+	initCmd.Flags().StringVar(&initAgent, "agent", "claude", "AI agent (claude, codex, etc.)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Agent name for mework agent send (default: orchestrator)")
 	initCmd.Flags().StringVar(&initBackend, "backend", "claude", "AI backend (claude, codex, etc.)")
 }
