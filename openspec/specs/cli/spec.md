@@ -14,12 +14,15 @@ The system SHALL provide commands grouped as: Core (provider task management:
 `comment list/add`; `search`), Runner (`runner enroll` for install-once
 enrollment; `daemon start/stop/status/restart/logs`; read-only `agent list`;
 `server start` to run the hub in-process; a `session` group to inspect and drive
-interactive sessions — `session list`, `session create`, `session send`, `session attach`,
-`session close`; and a `sandbox` group to run a local workspace as a worker — `sandbox
-start`, `sandbox list`, `sandbox stop`, `sandbox send`), and Additional (`login`;
-`auth status/logout`; `config show/set`; `provider connect`; `version`). Read commands
-SHALL support `--json` output. The poll-oriented `runtime register` / claim framing is
-replaced by `runner enroll`.
+interactive sessions — `session list`, `session create`, `session send`,
+`session attach`, `session close`; and a `sandbox` group to run a local
+workspace as a worker — `sandbox start`, `sandbox list`, `sandbox stop`,
+`sandbox send`), and Additional (`login`; `auth status/logout`; `config
+show/set`; `provider connect`; `version`). Read commands SHALL support
+`--json` output.
+
+The poll-oriented `runtime register` / claim framing is replaced by
+`runner enroll`.
 
 `runner enroll` SHALL perform a real enrollment handshake: it exchanges the supplied
 registration token for a durable runner identity by calling the server enrollment
@@ -32,23 +35,44 @@ secret keys, with an optional listen-address override), running database migrati
 serving the hub with graceful shutdown. It is suitable as the command of a container/
 docker-compose service alongside a database service. When the binary is built without an
 in-process hub available, `server start` SHALL fail with a clear, actionable error rather
-than silently doing nothing.
+than degrading silently.
 
-The `session` commands SHALL be a real client of the server session API, authenticated as
-the human caller (PAT): `session list` queries the server for the caller's sessions;
-`session create` creates a session for a named agent (and runner); `session send` submits a
-chat turn to a session; `session attach` streams the session's events until a terminal
-event or an idle timeout; `session close` closes a session.
+#### Scenario: New flags are part of the documented command surface
 
-The `sandbox` commands SHALL turn a local workspace into a server-addressable worker.
-`sandbox start -w <dir>` (default the current directory) SHALL require a `mework.yml` in the
-workspace, resolve the workspace to an absolute path, target the local enrolled runner
-identity, and create a workspace-bound session so the local daemon opens a long-lived
-sandbox bound to that directory; it SHALL print the session id and MAY stream events with
-`--attach`. `sandbox list`, `sandbox stop <id>`, and `sandbox send <id> <message>` SHALL
-manage and message a worker by its session id (the latter equivalent to `session send`).
-When the machine is not enrolled, `sandbox start` SHALL fail with guidance to enroll/start
-the daemon.
+- **WHEN** `mework <cmd> --help` is invoked for any command gaining a new flag in this change (`mework init` gaining `--provider`, `mework daemon start` gaining `--with-mezon` and `--no-server`)
+- **THEN** the help output advertises the new flag with a one-line description, alongside the existing flags
+
+### Requirement: `mework init` accepts `--provider`
+
+`mework init` SHALL additionally accept `--provider <name>` where `<name>`
+is one of `mezon` (v1). When set, the command writes a `provider: <name>`
+block to `mework.yml` along with a default provider-specific policy. When
+unset, the original behavior is preserved (no `provider:` block written).
+
+#### Scenario: `mework init --provider mezon` writes the provider block to mework.yml
+
+- **WHEN** the user runs `mework init --workspace . --agent claude --name mybot --provider mezon`
+- **THEN** `mework.yml` contains a `provider: mezon` key with a default echo-policy
+
+#### Scenario: `mework init` without `--provider` keeps old behavior
+
+- **WHEN** the user runs `mework init --workspace . --agent claude --name mybot` (no `--provider`)
+- **THEN** `mework.yml` is written without a `provider:` key (preserves prior scaffolding)
+
+### Requirement: `mework daemon start` accepts `--with-mezon` and `--no-server` in `--offline` mode
+
+`mework daemon start` SHALL additionally accept `--with-mezon` and
+`--no-server` when used together with `--offline`. See the
+`mezon-offline-bundle` capability for the full state machine. When
+`--offline --with-mezon` is set, the daemon SHALL delegate to the offline-stack
+orchestrator described in `mezon-offline-bundle`; when `--offline` is set
+without `--with-mezon` (the default), the existing pure-CLI offline flow runs
+unchanged.
+
+#### Scenario: `daemon start --offline --with-mezon` is the documented path for offline Mezon
+
+- **WHEN** the user runs `mework daemon start --offline --with-mezon --workspace <dir>` with valid Mezon credentials
+- **THEN** the CLI accepts the flag combination and the offline-stack orchestrator runs
 
 #### Scenario: Start the hub in-process
 
