@@ -19,6 +19,14 @@ import (
 	_ "mework/libs/server/storage/fs"
 )
 
+// Build-time variables — injected via -ldflags (see .goreleaser.yml).
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
+
 func main() {
 	log.Println("Starting mework server...")
 

@@ -12,6 +12,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// Build-time variables — injected via -ldflags (see .goreleaser.yml).
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
+
 func main() {
 	reg := NewToolRegistry()
 

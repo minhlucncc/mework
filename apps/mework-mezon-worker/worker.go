@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -136,6 +137,60 @@ func (p *OutboundPoller) pollDoneJobs(ctx context.Context) ([]doneJob, error) {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+// SendViaSocket sends a message to a local offline agent via Unix socket
+// (JSON-RPC "run" method) and returns the agent's response text.
+func SendViaSocket(socketPath, instruction string) (string, error) {
+	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("dial socket: %w", err)
+	}
+	defer conn.Close()
+
+	params, _ := json.Marshal(map[string]string{"instruction": instruction})
+	req := jsonRPCRequest{
+		Method: "run",
+		Params: json.RawMessage(params),
+		ID:     1,
+	}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return "", fmt.Errorf("send request: %w", err)
+	}
+
+	var resp jsonRPCResponse
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+		return "", fmt.Errorf("set deadline: %w", err)
+	}
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	if resp.Error != nil {
+		return "", fmt.Errorf("agent error: %v", resp.Error)
+	}
+
+	// Extract output from result.
+	if resp.Result != nil {
+		if m, ok := resp.Result.(map[string]interface{}); ok {
+			if out, ok := m["output"].(string); ok {
+				return out, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// jsonRPCRequest/Response mirror the offline agent's protocol.
+type jsonRPCRequest struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params,omitempty"`
+	ID     interface{}     `json:"id"`
+}
+
+type jsonRPCResponse struct {
+	Result interface{} `json:"result,omitempty"`
+	Error  interface{} `json:"error,omitempty"`
+	ID     interface{} `json:"id"`
 }
 
 // Cursor persistence.

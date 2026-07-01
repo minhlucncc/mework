@@ -29,7 +29,7 @@ type Config struct {
 }
 
 // Load reads configuration from environment variables and/or config file.
-// Required: at least one bot configured, MEWORK_TOKEN.
+// Required: at least one bot configured.
 func Load() (*Config, error) {
 	cfg := &Config{
 		MeworkServerURL: env("MEWORK_SERVER_URL", "http://localhost:8080"),
@@ -70,9 +70,6 @@ func Load() (*Config, error) {
 	// Validate.
 	if len(cfg.Bots) == 0 {
 		return nil, fmt.Errorf("no bots configured — set MEZON_APP_ID+MEZON_API_KEY, or MEZON_CONFIG")
-	}
-	if cfg.MeworkToken == "" {
-		return nil, fmt.Errorf("MEWORK_TOKEN is required")
 	}
 
 	return cfg, nil

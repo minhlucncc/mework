@@ -1,209 +1,241 @@
 # mework
 
-An **agent hub** for running AI coding agents from your task board — built around the **DX of
-a GitHub Actions self-hosted runner**: install a runner once, then drive everything from the
-hub. Agents run **on your machine inside sandboxes**, so source code and credentials never
-leave the device.
+An **AI agent runtime** that runs in two modes:
 
-> **Status.** The agent-hub model described below is **implemented**: install-once runner
-> enrollment, SSE-pushed dispatch, the versioned agent catalog, interactive sessions, and
-> workspace-bound sandboxes all work today. The earlier Mello **poll/queue pipeline**
-> (webhook → job → claim → write-back) also ships and is the **default** webhook path. A few
-> components are still stubs — see [Implementation status](#implementation-status).
+- **Server mode** — multi-tenant hub with Postgres + Redis, enrolled runners,
+  webhook pipelines, and provider integrations (Mello, Mezon).
+- **Offline mode** — single-user, zero external dependencies. A standalone
+  worker with embedded miniredis, an orchestrator agent with MCP tools, and
+  Mezon chat integration.
 
-## Overview
+Agents run **on your machine inside sandboxes** — source code and credentials
+never leave the device.
 
-mework connects task-management platforms (**Mello** kanban today; Jira / GitHub Issues by
-design) to AI coding agents that run on **your** machines — not a cloud AI service. It has
-**three components**:
+## Quick comparison
 
-1. **Server = Agent Hub** — a provider-agnostic gateway + registry: provider connections, an
-   **agent catalog** of versioned pullable agents, a **message broker** that pushes work to
-   per-runner/per-session **topics**, session metadata, and a **permission/grant** model that
-   scopes what each dispatch may do. The hub **never runs an agent or sees your source**.
-2. **Daemon = Runner** — enrolled **once** on a device, then unattended: it **subscribes over
-   SSE**, receives dispatches, runs the agent in a sandbox, enforces the granted permissions,
-   and reports results.
-3. **Sandbox** — a **pluggable runtime** (`local` / `docker` / …) that runs **one agent** with
-   the prompt fed over **stdin (never argv)**, so dispatched work executes without touching the
-   host directly.
+| | Server mode | Offline mode |
+|---|---|---|
+| **Database** | Postgres (required) | None (miniredis embedded) |
+| **Message broker** | Postgres LISTEN/NOTIFY or in-memory | In-memory (miniredis lists) |
+| **Multi-tenant** | Yes (accounts, tenants, PAT auth) | Single user |
+| **Provider integrations** | Webhooks (Mello), Mezon worker | Mezon bot (standalone) |
+| **State persistence** | Durable (Postgres) | Ephemeral (lost on restart) |
+| **Setup** | `docker compose up` + enroll runner | `mework init` + start worker |
+| **Best for** | Teams, production, multi-provider | Dev, testing, single user |
 
 ## Architecture
 
+### Server mode
+
 ```
-provider ─webhook→  Server (Agent Hub)            ── gateway + registry only ──
-                      • provider connections + signature-verified webhooks
-                      • agent catalog (versioned, pullable)
-                      • message broker → topics (memory | postgres)
-                      • session manager + permission/grant model
-                      │  SSE push                   ▲ POST/GET (ack, result, pull)
-                      ▼                             │
-                    Daemon = Runner  (enrolled once, unattended)
-                      • subscribe runner.<id>.dispatch over SSE
-                      • on dispatch: pull agent / open sandbox, enforce grant
-                      │ spawn (one agent per sandbox; prompt via stdin)
-                      ▼
-                    Sandbox (local | docker | …)
-                      • isolated; runs ONE agent
-                      • result/events ─→ hub ─→ provider write-back or session stream
+Provider ─webhook→  mework-server (Agent Hub)
+                      ├── Postgres (jobs, sessions, runtimes)
+                      ├── Redis (turbo engine state, dedup)
+                      ├── Agent catalog + session manager
+                      └── SSE push → Runner → Sandbox → result
 ```
 
-**Two delivery flows coexist:**
+### Offline mode
 
-- **Legacy Mello pipeline (default):** a `@mework …` comment webhook → durable Postgres job →
-  the daemon claims it (`/api/v1/jobs/claim`) → runs the agent → the hub writes the result back
-  to the provider over REST. Experimental per-resource **channel routing** is **off by default**
-  (`CHANNEL_ROUTING_ENABLED`).
-- **Interactive session / sandbox (agent-hub):** `mework sandbox start -w .` (or `session
-  create`) registers a session → the hub dispatches an open-session message on
-  `runner.<id>.dispatch` → the daemon opens a **long-lived sandbox** → chat turns flow over the
-  bus (`session.<id>.input` in, `session.<id>.control` events out) and stream back to the CLI.
+```
+Mezon ──→ mework-mezon-worker (turbo engine)
+             ├── miniredis (in-memory state)
+             ├── Orchestrator agent (Claude with MCP tools)
+             ├── .claude/skills/ (session-manager, communicator, planner)
+             └── .claude/commands/ (/sessions, /spawn, /status, /stop)
+```
 
-**Permissions.** Every dispatch carries a scoped, least-privilege **grant**. The hub
-authorizes, the runner enforces, the sandbox contains. No grant for an operation → denied.
-
-Full design, the SSE contract, the permission model, and bus topics:
-**[docs/architecture.md](docs/architecture.md)**.
+The offline worker is a single binary that:
+1. Connects to Mezon via WebSocket (turbo SDK, multi-bot)
+2. Receives messages and pushes them to an **inbox queue** (Redis list)
+3. An **orchestrator goroutine** pops the inbox, runs Claude with MCP tools
+4. Results go to an **outbox queue**, then sent back to Mezon via the WebSocket
 
 ## Install
 
+### Quick install (macOS / Linux)
+
 ```bash
-make build            # → bin/mework (CLI + daemon + `server start`) and bin/mework-server
-# or
-go install ./apps/...  # installs mework and mework-server
+curl -fsSL https://raw.githubusercontent.com/minhlucncc/mework/main/install.sh | sh
 ```
 
-Requires **Go 1.26** and **PostgreSQL** for the server. Claude Code (`claude` in PATH) on the
-runner machine to actually execute agents.
+Installs `mework`, `mework-server`, `mework-mezon-worker`, and `mework-mcp`
+to `/usr/local/bin` (or `~/.local/bin`).
 
-## Quick start
-
-### A) Local, three commands
+### From source
 
 ```bash
-# env for the in-process hub (server fails fast without these; keys must be ≥16 chars)
-export DATABASE_URL=postgres://postgres:postgres@localhost:5432/mework
-export SERVER_KEY=dev-server-key-0123456789 MEWORK_SECRET_KEY=dev-secret-key-0123456789
+git clone https://github.com/minhlucncc/mework.git
+cd mework && make build    # → bin/mework, bin/mework-server, bin/mework-mezon-worker, bin/mework-mcp
+```
 
-# 1. Run the hub (in-process; or run ./bin/mework-server, or docker compose)
-mework server start --listen :8080
+Requires **Go 1.26**. Server mode also needs **PostgreSQL** (Docker:
+`make test-db`). Offline mode needs **only the binary** — no databases to install.
 
-# 2. Log in, enroll this machine as a runner, start the daemon
-mework login --token <mello-pat>
-REG=$(curl -s -XPOST localhost:8080/api/v1/runners/registration-tokens \
-        -H "Authorization: Bearer <mello-pat>" | jq -r .token)
-mework runner enroll --url http://localhost:8080 --token "$REG"   # writes ~/.mework/identity.json
+## Quick start: Offline with Mezon
+
+The fastest way to try mework — one binary, zero infrastructure.
+
+```bash
+# 1. Install
+curl -fsSL https://raw.githubusercontent.com/minhlucncc/mework/main/install.sh | sh
+# Or build from source: git clone + make build
+
+# 2. Create a workspace with the orchestrator template
+mkdir ~/my-bot && cd ~/my-bot
+mework init --agent orchestrator
+
+# 3. Configure your Mezon bot credentials
+#    Get app_id and api_key at https://mezon.ai/developers/dashboard
+mework provider mezon set --app-id YOUR_APP_ID --api-key YOUR_API_KEY
+
+# 4. Start the worker (miniredis embedded, no install needed)
+mework mezon-worker start
+
+# 5. Add the bot to a Mezon clan, then chat
+#    @your-bot hello
+#    @your-bot sessions
+#    @your-bot spawn explore this repo
+```
+
+No Postgres, no Redis, no server. The worker has everything built-in.
+You can also test from the CLI:
+
+```bash
+mework agent send orchestrator "explore the workspace"
+mework agent send orchestrator "list sessions" --wait
+```
+
+## Quick start: Server mode
+
+### Server mode (multi-tenant)
+
+```bash
+# 1. Start Postgres and Redis
+docker run -d --name mework-pg -p 5432:5432 postgres:16-alpine
+docker run -d --name mework-redis -p 6379:6379 redis:7-alpine
+
+# 2. Start the server
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/mework \
+  SERVER_KEY=your-key-min-16-chars \
+  MEWORK_SECRET_KEY=your-key-min-16-chars \
+  REDIS_URL=redis://localhost:6379/0 \
+  bin/mework-server
+
+# 3. Enroll a runner
+mework runner enroll --url http://localhost:8080 --token <registration-token>
 mework daemon start
 
-# 3. Turn a workspace folder (with a mework.yml) into a running, chattable worker
-SID=$(mework sandbox start -w . --json | jq -r .id)
-mework session attach "$SID"               # stream events (one terminal)
-mework session send  "$SID" "summarize this repo"   # send a turn (another terminal)
-mework sandbox stop  "$SID"
+# 4. Create an agent profile and start a sandbox
+mework profile create --name default --backend claude
+mework sandbox start -w .
 ```
 
-### B) Mello kanban trigger
+### Offline mode (single user, zero deps)
 
 ```bash
-mework login --token <mello-pat>
-mework provider connect --provider mello --token <mello-pat> --webhook-secret <secret>
-mework runner enroll --url <hub> --token <registration-token>
-mework profile create --name default --body ./system_prompt.txt --backend claude --harness claude-code
-mework daemon start
+# 1. Initialize a workspace
+mework init --workspace . --agent orchestrator
 
-# Then comment on any ticket:  @mework <profile> [workflow] <instructions>
-#   e.g.  @mework default review fix the failing login test
-# workflow ∈ plan|cook|test|review|ship|journal
+# 2. Start the Mezon bot worker with miniredis
+MEZON_CONFIG=./bots.json \
+  bin/mework-mezon-worker
+
+# 3. Chat with the orchestrator via Mezon (@your-bot)
+#    or via CLI
+mework agent send orchestrator "hello"
 ```
 
-## Commands
+The offline worker auto-initializes the orchestrator workspace with:
+- `CLAUDE.md` — orchestrator persona, commands, session management
+- `.claude/settings.json` — MCP server config (mework-mcp tools)
+- `.claude/skills/` — session-manager, communicator, planner
+- `.claude/commands/` — `/sessions`, `/spawn`, `/status`, `/stop`
 
-| Group | Commands |
-|-------|----------|
-| **Core** | `workspace list/pack/push/pull`, `board list/get`, `ticket list/get/create/move`, `comment list/add`, `search` |
-| **Runner** | `server start [--listen]`, `runner enroll --url --token`, `daemon start/stop/status/restart/logs`, `runtime register/list/revoke` *(legacy)*, `agent list`, `profile create/list/update/delete` |
-| **Sessions** | `session list/create/send/attach/close`, `sandbox start -w <dir> [--attach] [--json] [--idle] / list / stop / send` |
-| **Additional** | `login`, `auth status/logout`, `config show/set`, `provider connect`, `version` |
+## CLI Commands
 
-`runner enroll` is the primary enrollment path; `runtime register` remains for backward
-compatibility. Most list/get commands accept `--json`. Global flags: `--server-url`,
-`--workspace-id`, `--profile`, `--debug`. Full reference: **[docs/cli-and-usage.md](docs/cli-and-usage.md)**.
+```                   
+Core:     workspace, board, ticket, comment, search
+Runtime:  daemon, agent, profile, runner, runtime, sandbox, session, server
+Worker:   mezon-worker (start/stop/status/logs)
+Setup:    init, login, provider, config, auth
+```
 
-## HTTP API (summary)
+| Command | Purpose |
+|---------|---------|
+| `mework init --agent orchestrator` | Scaffold a workspace with CLAUDE.md + MCP + skills |
+| `mework daemon start` | Start the local agent daemon (server mode) |
+| `mework mezon-worker start` | Start the standalone Mezon bot worker |
+| `mework agent send <name> <msg>` | Send a message to a local or hub agent |
+| `mework provider mezon bot register` | Register a Mezon bot on the server |
+| `mework session create/attach/send` | Interactive session lifecycle |
+| `mework sandbox start -w .` | Turn a workspace into a runnable sandbox |
+
+Full reference: **[docs/cli-and-usage.md](docs/cli-and-usage.md)**.
+
+## HTTP API
 
 | Auth | Routes |
 |------|--------|
 | **Open** | `GET /healthz` · `GET /livez` · `GET /readyz` · `POST /webhooks/{provider}` |
-| **Runtime (`rt_`)** | `/api/v1/jobs/{ack,claim,heartbeat,subscribe,messages/{id}/ack}` · `POST /api/v1/runners/sessions/{id}/{result,events}` · `GET /api/v1/agents/{name}/versions/{version}/pull` (grant) |
-| **Registration token** | `POST /api/v1/runners/enroll` |
-| **PAT** | `/api/v1/{runtimes,connections,profiles,agents,channels,runs/{id}/artifacts}` · `/api/v1/runners/registration-tokens` · `/api/v1/sessions` (+ `/{id}`, `/{id}/messages`, `/{id}/stream`) |
+| **Runtime (`rt_`)** | `/api/v1/jobs/*` · `/api/v1/runners/sessions/*` · `/api/v1/agents/*/pull` |
+| **PAT** | `/api/v1/{runtimes,connections,profiles,agents,sessions,channels,mezon/bots}` |
 
-Details, topics, and data model: **[docs/api-reference.md](docs/api-reference.md)**.
+Details: **[docs/api-reference.md](docs/api-reference.md)**.
 
-## Implementation status
+## Orchestrator agent
 
-Production-ready: the Mello pipeline, runner enrollment, SSE dispatch, interactive
-sessions/sandboxes, the `local` and `docker` sandbox engines, security invariants
-(stdin-not-argv, AES-256-GCM credential sealing, HMAC `rt_token`, signature-verified webhooks),
-and the memory/postgres message brokers.
+The orchestrator is a Claude Code agent with:
 
-Still stub / not production (tracked):
+- **MCP tools**: `spawn_sandbox`, `list_child_sandboxes`, `get_sandbox_status`,
+  `destroy_sandbox`, `notify_human`, `ask_human`, `get_session_context`, `write_artifact`
+- **Skills**: session management, task planning, Mezon communication
+- **Commands**: `/sessions`, `/spawn <task>`, `/status <id>`, `/stop <id>`
 
-| Component | State |
-|-----------|-------|
-| Artifact store | dummy (`/runs/{id}/artifacts` returns "not yet wired") |
-| NATS bus backend | not wired (memory/postgres are) |
-| GitHub / Jira providers | stubs (Mello is real) |
-| `mework-sandbox` binary | stub mode |
-| cloudflare / custom engines | partial |
-| channel routing | experimental, off by default |
-| per-turn session streaming | coarse (one token/message/done per turn) |
+The orchestrator manages work by spawning child sandboxes — each sandbox is an
+independent Claude Code agent working on a specific task. The user chats with the
+orchestrator to coordinate everything.
 
-## Spec-driven development with OpenSpec
+## Templates
 
-This project uses **[OpenSpec](https://github.com/Fission-AI/OpenSpec)** — non-trivial changes
-start as a spec/proposal, not code.
-
-```
-/opsx:explore   think through an idea (no code written)
-/opsx:propose   create a change + artifacts (proposal → delta specs → design → tasks)
-/opsx:spec      quality-gate the spec across 6 review axes
-/opsx:apply     implement the tasks
-/opsx:sync      merge delta specs into the main specs
-/opsx:archive   finalize → openspec/changes/archive/
+```                   
+templates/workspace/
+├── orchestrator/     ← mework init --agent orchestrator
+└── worker/           ← mework init --agent worker
 ```
 
-Canonical capabilities live as baseline specs in `openspec/specs/` (e.g. `provider-gateway`,
-`webhook-pipeline`, `job-queue`, `rest-writeback`, `daemon-runtime`, `message-bus`,
-`prebuilt-agent-sandbox`, `channel-routing`, `auth-and-secrets`, `cli`, `project-structure`).
-Shipped changes are archived under `openspec/changes/archive/`. Change dirs are named
-`cNNNN-<slug>` to encode apply order. Workflow details:
+Each template includes `mework.yml`, `CLAUDE.md`, `.claude/settings.json`,
+`.claude/skills/`, and `.claude/commands/`.
+
+## Spec-driven development
+
+All non-trivial changes start as specs using OpenSpec:
+
+```
+/opsx:explore → /opsx:propose → /opsx:spec → /opsx:apply → /opsx:ship → /opsx:archive
+```
+
+Shipped changes live in `openspec/changes/archive/`. Details:
 [docs/openspec-workflow.md](docs/openspec-workflow.md).
 
 ## Development
 
 ```bash
-make build    # bin/mework and bin/mework-server (version ldflags)
-make vet      # go vet across all modules
-make test     # go test -p 1 across modules (DB tests skip without TEST_DATABASE_URL)
-make test-db  # start a Docker Postgres for DB-backed tests
-make snapshot # goreleaser cross-compile (requires goreleaser)
+make build    # all binaries
+make vet      # go vet
+make test     # go test -p 1 (DB tests need TEST_DATABASE_URL)
+make test-db  # Docker Postgres
 ```
-
-DB-backed tests skip unless `TEST_DATABASE_URL` is set (e.g.
-`postgres://postgres:postgres@localhost:5432/mework_test`). The acceptance BDD suite under
-`libs/tests/e2e` is gated behind the `e2e` build tag.
 
 ## Docs
 
-Start at **[docs/README.md](docs/README.md)** — the documentation index. Highlights:
-
-- [docs/product-overview.md](docs/product-overview.md) — product overview.
-- [docs/architecture.md](docs/architecture.md) — architecture, flows, bus topics.
-- [docs/api-reference.md](docs/api-reference.md) — endpoints, auth, topics, data model.
-- [docs/cli-and-usage.md](docs/cli-and-usage.md) — CLI reference + end-to-end usage.
-- [docs/auth-and-secrets.md](docs/auth-and-secrets.md) — auth, tokens, grants, env vars.
-- [docs/runtime-and-sandbox.md](docs/runtime-and-sandbox.md) — runner loop + sandboxes.
-- [docs/deployment-guide.md](docs/deployment-guide.md) — deploy the server.
-- [examples/remote-claude/](examples/remote-claude/) — runnable example: workspace → sandbox.
-- [CLAUDE.md](CLAUDE.md) — developer guide for AI agents working in this repo.
+- [docs/product-overview.md](docs/product-overview.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/api-reference.md](docs/api-reference.md)
+- [docs/cli-and-usage.md](docs/cli-and-usage.md)
+- [docs/deployment-guide.md](docs/deployment-guide.md)
+- [docs/auth-and-secrets.md](docs/auth-and-secrets.md)
+- [docs/runtime-and-sandbox.md](docs/runtime-and-sandbox.md)
+- [docs/openspec-workflow.md](docs/openspec-workflow.md)
+- [docs/engineering-skills.md](docs/engineering-skills.md)
+- [examples/remote-claude/](examples/remote-claude/)
