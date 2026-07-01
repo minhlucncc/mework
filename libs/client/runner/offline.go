@@ -16,9 +16,16 @@ import (
 	"mework/libs/sandbox"
 )
 
+// ChatEntry records one turn in the conversation history.
+type ChatEntry struct {
+	Role    string // "user" or "assistant"
+	Content string
+}
+
 // OfflineServer listens on a Unix socket, accepts JSON-RPC messages, and
 // dispatches tasks to a workspace-bound session's sandbox over stdin (never
-// argv), preserving the injection-safety invariant.
+// argv), preserving the injection-safety invariant. Conversation history is
+// accumulated and injected on each call so the backend sees prior context.
 type OfflineServer struct {
 	socketPath  string
 	listener    net.Listener
@@ -28,7 +35,20 @@ type OfflineServer struct {
 	closed      bool
 	policy      *policy.Policy
 	rateLimiter *policy.RateLimiter
+
+	// Conversation history — accumulated across calls and injected into each
+	// prompt so the backend sees prior context despite one-shot execution.
+	history   []ChatEntry
+	histMu    sync.Mutex
 }
+
+const (
+	// maxHistoryTurns caps the number of conversation turns retained.
+	maxHistoryTurns = 50
+	// maxHistoryChars caps the total characters of the formatted history
+	// transcript to avoid overflowing the context window.
+	maxHistoryChars = 8000
+)
 
 // ---------------------------------------------------------------------------
 // Socket path derivation
@@ -71,6 +91,69 @@ func NewOfflineServer(workspaceDir string, session *Session) (*OfflineServer, er
 		session:    session,
 		done:       make(chan struct{}),
 	}, nil
+}
+
+// buildPrompt assembles the full prompt from conversation history and the
+// current instruction. The history is formatted as a transcript so the
+// backend sees the full context despite each call being one-shot.
+func (s *OfflineServer) buildPrompt(instruction string) string {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+
+	// Format history as a conversation transcript.
+	var transcript strings.Builder
+	for _, entry := range s.history {
+		role := strings.Title(entry.Role)
+		transcript.WriteString(fmt.Sprintf("%s: %s\n", role, entry.Content))
+	}
+
+	// Trim from the front if the transcript is too long.
+	hist := transcript.String()
+	if len(hist) > maxHistoryChars {
+		hist = trimFront(hist, maxHistoryChars)
+	}
+
+	// Assemble the final prompt.
+	var prompt strings.Builder
+	if hist != "" {
+		prompt.WriteString("Previous conversation:\n")
+		prompt.WriteString(hist)
+		prompt.WriteString("\n")
+	}
+	prompt.WriteString(fmt.Sprintf("User: %s\nAssistant:", instruction))
+	return prompt.String()
+}
+
+// trimFront returns the last n characters of s, starting at a newline boundary
+// when possible so the transcript doesn't begin mid-line.
+func trimFront(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := len(s) - n
+	// Try to start at a newline boundary.
+	if i := strings.IndexByte(s[cut:], '\n'); i >= 0 && i < n/2 {
+		cut += i + 1
+	}
+	return s[cut:]
+}
+
+// appendExchange adds one user→assistant exchange to the conversation history,
+// trimming the oldest entries when the history is full.
+func (s *OfflineServer) appendExchange(instruction, response string) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+
+	s.history = append(s.history,
+		ChatEntry{Role: "user", Content: instruction},
+		ChatEntry{Role: "assistant", Content: response},
+	)
+
+	// Trim old entries when we exceed the cap.
+	if len(s.history) > maxHistoryTurns*2 {
+		excess := len(s.history) - maxHistoryTurns*2
+		s.history = s.history[excess:]
+	}
 }
 
 // Start unlinks any stale socket at the path, begins listening, and accepts
@@ -221,23 +304,34 @@ func (s *OfflineServer) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// handleRun feeds the instruction to the session's sandbox over stdin and
-// returns the output and exit code as a JSON-RPC response.
+// handleRun feeds the instruction to the sandbox over stdin and returns the
+// output. Conversation history is injected into the prompt so the backend
+// (e.g. claude) sees prior context despite each call being a fresh process.
 func (s *OfflineServer) handleRun(ctx context.Context, conn net.Conn, id interface{}, instruction string) {
+	// Build the prompt with conversation history injected.
+	prompt := s.buildPrompt(instruction)
+
+	// Execute via sandbox.Exec (one-shot, but with full context in prompt).
 	var out strings.Builder
 	exitCode, execErr := s.session.sandbox.Exec(
 		ctx,
 		[]string{s.session.backend},
-		strings.NewReader(instruction),
+		strings.NewReader(prompt),
 		&out, &out,
 	)
 	if execErr != nil {
 		sendJSONRPCError(conn, id, -32000, execErr.Error())
 		return
 	}
+
+	output := out.String()
+
+	// Record the exchange in conversation history for the next call.
+	s.appendExchange(instruction, output)
+
 	_ = json.NewEncoder(conn).Encode(jsonRPCResponse{
 		JSONRPC: "2.0",
-		Result:  runResult{Output: out.String(), ExitCode: exitCode},
+		Result:  runResult{Output: output, ExitCode: exitCode},
 		ID:      id,
 	})
 }
