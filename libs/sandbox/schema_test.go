@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -111,6 +113,94 @@ func TestSandboxBundleMetadata_Validate(t *testing.T) {
 				t.Fatalf("Validate() = %v, want nil", err)
 			}
 		})
+	}
+}
+
+func TestSandboxBundleMetadata_AccessTierValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		meta    SandboxBundleMetadata
+		wantErr bool
+		errHint string
+	}{
+		{
+			name:    "empty AccessTier is valid (normalizes to worker)",
+			meta:    SandboxBundleMetadata{Name: "test", Version: "1.0.0", Engine: "local", Backend: "claude", AccessTier: ""},
+			wantErr: false,
+		},
+		{
+			name:    "observer is valid",
+			meta:    SandboxBundleMetadata{Name: "test", Version: "1.0.0", Engine: "local", Backend: "claude", AccessTier: core.AccessObserver},
+			wantErr: false,
+		},
+		{
+			name:    "worker is valid",
+			meta:    SandboxBundleMetadata{Name: "test", Version: "1.0.0", Engine: "local", Backend: "claude", AccessTier: core.AccessWorker},
+			wantErr: false,
+		},
+		{
+			name:    "isolated is valid",
+			meta:    SandboxBundleMetadata{Name: "test", Version: "1.0.0", Engine: "local", Backend: "claude", AccessTier: core.AccessIsolated},
+			wantErr: false,
+		},
+		{
+			name:    "unknown tier is rejected",
+			meta:    SandboxBundleMetadata{Name: "test", Version: "1.0.0", Engine: "local", Backend: "claude", AccessTier: core.AccessTier("admin")},
+			wantErr: true,
+			errHint: "unknown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.meta.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("Validate() = nil, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+			if tt.errHint != "" && err != nil && !strings.Contains(err.Error(), tt.errHint) {
+				t.Errorf("Validate() error = %q, want hint %q", err.Error(), tt.errHint)
+			}
+		})
+	}
+}
+
+// TestSandboxBundleMetadata_AccessTierRoundTrip asserts that the AccessTier
+// field survives a marshal/unmarshal round-trip through both YAML and JSON.
+func TestSandboxBundleMetadata_AccessTierRoundTrip(t *testing.T) {
+	want := SandboxBundleMetadata{
+		Name:       "test",
+		Version:    "1.0.0",
+		Engine:     "local",
+		Backend:    "claude",
+		AccessTier: core.AccessObserver,
+	}
+
+	// YAML round-trip
+	yamlData, err := yaml.Marshal(want)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	var gotYAML SandboxBundleMetadata
+	if err := yaml.Unmarshal(yamlData, &gotYAML); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if gotYAML.AccessTier != want.AccessTier {
+		t.Errorf("YAML round-trip AccessTier = %q, want %q", gotYAML.AccessTier, want.AccessTier)
+	}
+
+	// JSON round-trip
+	jsonData, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var gotJSON SandboxBundleMetadata
+	if err := json.Unmarshal(jsonData, &gotJSON); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if gotJSON.AccessTier != want.AccessTier {
+		t.Errorf("JSON round-trip AccessTier = %q, want %q", gotJSON.AccessTier, want.AccessTier)
 	}
 }
 

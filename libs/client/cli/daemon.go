@@ -64,7 +64,7 @@ var daemonStartCmd = &cobra.Command{
 					Workspace: workspaceDir,
 				})
 			}
-			return runOfflineForeground(prof)
+			return runOfflineForeground(cmd.Context(), prof)
 		}
 		if running, pid := runner.IsRunning(prof); running {
 			fmt.Printf("daemon already running (pid %d)\n", pid)
@@ -251,7 +251,7 @@ func runForeground(prof string) error {
 // runOfflineForeground validates the offline-mode setup and starts the
 // workspace-bound session without hub enrollment or network dependencies.
 // It returns nil when all validations pass and the session is ready.
-func runOfflineForeground(prof string) error {
+func runOfflineForeground(ctx context.Context, prof string) error {
 	if workspaceDir == "" {
 		return fmt.Errorf("--workspace is required in offline mode")
 	}
@@ -282,7 +282,8 @@ func runOfflineForeground(prof string) error {
 
 	// Wire a self-contained in-process session: in-memory broker, local-only
 	// grant, and a file-system definition resolver from the workspace.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	var cancel context.CancelFunc
+	ctx, cancel = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	broker := memory.New()

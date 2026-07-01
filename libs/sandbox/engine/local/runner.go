@@ -32,13 +32,15 @@ func (d *Driver) Caps() core.SandboxCaps {
 		IsIsolated:  false,
 		IsRemote:    false,
 		DriverName:  "local",
+		AccessTier:  core.AccessWorker,
 	}
 }
 
 // localSandbox is a running local subprocess sandbox.
 type localSandbox struct {
-	id      string
-	workDir string
+	id         string
+	workDir    string
+	restricted bool // true for observer tier, false otherwise
 }
 
 func (s *localSandbox) ID() string { return s.id }
@@ -75,6 +77,12 @@ func (s *localSandbox) Signals(ctx context.Context, sig string) error {
 // Start creates a working directory and returns a sandbox. No process is
 // started until Exec is called.
 func (d *Driver) Start(ctx context.Context, spec core.RunSpec) (ports.Sandbox, error) {
+	// Observer tier requires a workspace path for scoped execution.
+	tier := spec.AccessTier.Default()
+	if tier == core.AccessObserver && spec.Workspace.Path == "" {
+		return nil, fmt.Errorf("observer tier requires a workspace path")
+	}
+
 	// A bound workspace selects the working directory; otherwise fall back to
 	// the SandboxID-derived directory (today's behavior).
 	workDir := spec.Workspace.Path
@@ -88,8 +96,9 @@ func (d *Driver) Start(ctx context.Context, spec core.RunSpec) (ports.Sandbox, e
 		return nil, fmt.Errorf("create work dir: %w", err)
 	}
 	return &localSandbox{
-		id:      spec.SandboxID,
-		workDir: workDir,
+		id:         spec.SandboxID,
+		workDir:    workDir,
+		restricted: tier == core.AccessObserver,
 	}, nil
 }
 

@@ -50,6 +50,10 @@ type SessionDeps struct {
 	// control topic.  Set this to the hub's session id so events reach the
 	// client that called session attach.
 	SessionID core.SessionID
+
+	// AccessTier, when set, determines the capability tier for the session's
+	// sandbox. Empty string defaults to AccessWorker (see AccessTier.Default()).
+	AccessTier core.AccessTier
 }
 
 // Session drives a long-lived sandbox for one interactive, multi-turn chat. The
@@ -103,6 +107,7 @@ func OpenSession(ctx context.Context, ref string, caller Caller, deps SessionDep
 		BackendName: def.Backend,
 		SandboxID:   strings.ReplaceAll(ref, "@", "-") + "-" + string(info.ID),
 		Workspace:   deps.Workspace,
+		AccessTier:  deps.AccessTier.Default(),
 	}
 	if def.UsesImage() {
 		spec.Image = def.Image

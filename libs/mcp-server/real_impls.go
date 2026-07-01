@@ -112,9 +112,10 @@ type sessionInfo struct {
 }
 
 type createSessionReq struct {
-	AgentName string `json:"agent_name"`
-	Runner    string `json:"runner"`
-	Workspace string `json:"workspace,omitempty"`
+	AgentName  string `json:"agent_name"`
+	Runner     string `json:"runner"`
+	Workspace  string `json:"workspace,omitempty"`
+	AccessTier string `json:"access_tier,omitempty"`
 }
 
 // Start creates a new session on the hub as a backing sandbox.
@@ -126,8 +127,9 @@ func (m *RealSandboxManager) Start(ctx context.Context, agentID, prompt, image s
 
 	var info sessionInfo
 	req := createSessionReq{
-		AgentName: agentID,
-		Runner:    runner,
+		AgentName:  agentID,
+		Runner:     runner,
+		AccessTier: "worker",
 	}
 	if err := m.client.doJSON("POST", "/api/v1/sessions", req, &info); err != nil {
 		return "", fmt.Errorf("create session: %w", err)

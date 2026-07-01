@@ -23,6 +23,7 @@ type SandboxBundleMetadata struct {
 	ResourceLimits *core.ResourceLimits `yaml:"resourceLimits,omitempty" json:"resourceLimits,omitempty"`
 	Author         string               `yaml:"author,omitempty" json:"author,omitempty"`
 	Policy         *policy.Policy       `yaml:"policy,omitempty" json:"policy,omitempty"`
+	AccessTier     core.AccessTier      `yaml:"accessTier,omitempty" json:"accessTier,omitempty"`
 }
 
 // knownEngines is the allowlist of engines a definition may select. Adding a
@@ -51,9 +52,19 @@ func (m SandboxBundleMetadata) UsesImage() bool {
 	return containerEngines[m.Engine]
 }
 
+// knownTiers is the allowlist of recognised AccessTier values. The empty string
+// is accepted (normalised to worker at resolution time) but is not listed here
+// because Validate rejects unknown non-empty values only.
+var knownTiers = map[core.AccessTier]bool{
+	core.AccessObserver: true,
+	core.AccessWorker:   true,
+	core.AccessIsolated: true,
+}
+
 // Validate checks that the definition is well-formed: name and version are
 // required, the engine must be a known engine, the backend must be non-empty,
 // and container engines must pin an image. The local engine ignores the image.
+// AccessTier, if non-empty, must be one of the recognised tier values.
 func (m SandboxBundleMetadata) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("name is required")
@@ -69,6 +80,9 @@ func (m SandboxBundleMetadata) Validate() error {
 	}
 	if containerEngines[m.Engine] && m.Image == "" {
 		return fmt.Errorf("engine %q requires a pinned image", m.Engine)
+	}
+	if m.AccessTier != "" && !knownTiers[m.AccessTier] {
+		return fmt.Errorf("unknown access tier %q", m.AccessTier)
 	}
 	return nil
 }
