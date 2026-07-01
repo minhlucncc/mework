@@ -40,6 +40,10 @@ type StartOptions struct {
 	Broker bus.Broker
 	// Sessions owns the session lifecycle.
 	Sessions *session.Manager
+
+	// AccessTier, when set, determines the capability tier for the session's
+	// sandbox. Empty string defaults to AccessWorker.
+	AccessTier core.AccessTier
 }
 
 // StartWorkspaceSession opens an interactive session bound to opts.WorkspaceDir.
@@ -55,5 +59,6 @@ func StartWorkspaceSession(ctx context.Context, opts StartOptions) (*Session, er
 		Sessions:   opts.Sessions,
 		GrantKey:   opts.GrantKey,
 		Workspace:  core.Workspace{Path: opts.WorkspaceDir},
+		AccessTier: opts.AccessTier,
 	})
 }

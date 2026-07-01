@@ -118,6 +118,116 @@ func TestStart_WorkspaceBoundWorkingDir(t *testing.T) {
 	}
 }
 
+// TestCaps_AccessTier verifies that Caps() returns the default AccessTier
+// (AccessWorker) for backward compatibility.
+func TestCaps_AccessTier(t *testing.T) {
+	drv := New()
+	caps := drv.Caps()
+	if caps.AccessTier != core.AccessWorker {
+		t.Errorf("Caps().AccessTier = %q, want %q", caps.AccessTier, core.AccessWorker)
+	}
+}
+
+// TestStart_AccessTierObserver verifies that Start with AccessObserver
+// creates a sandbox bound to the workspace directory.
+func TestStart_AccessTierObserver(t *testing.T) {
+	drv := New()
+	ws := t.TempDir()
+	spec := core.RunSpec{
+		AgentID:    "agent-obs",
+		SandboxID:  "sb-obs",
+		Workspace:  core.Workspace{Path: ws},
+		AccessTier: core.AccessObserver,
+	}
+	sb, err := drv.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	ls := sb.(*localSandbox)
+	if ls.workDir != ws {
+		t.Errorf("workDir = %q, want %q", ls.workDir, ws)
+	}
+	// TODO (GREEN): also verify ls.restricted == true
+}
+
+// TestStart_AccessTierObserver_RequiresWorkspace verifies that observer-tier
+// sandbox requires a workspace path to be set.
+func TestStart_AccessTierObserver_RequiresWorkspace(t *testing.T) {
+	drv := New()
+	spec := core.RunSpec{
+		AgentID:    "agent-obs-nows",
+		SandboxID:  "sb-obs-nows",
+		AccessTier: core.AccessObserver,
+		// No Workspace.Path set — observer tier should reject this.
+	}
+	_, err := drv.Start(context.Background(), spec)
+	if err == nil {
+		t.Error("expected error for observer tier without workspace, got nil")
+	}
+}
+
+// TestStart_AccessTierWorker verifies that Start with AccessWorker
+// creates an unrestricted sandbox bound to the workspace directory.
+func TestStart_AccessTierWorker(t *testing.T) {
+	drv := New()
+	ws := t.TempDir()
+	spec := core.RunSpec{
+		AgentID:    "agent-wkr",
+		SandboxID:  "sb-wkr",
+		Workspace:  core.Workspace{Path: ws},
+		AccessTier: core.AccessWorker,
+	}
+	sb, err := drv.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	ls := sb.(*localSandbox)
+	if ls.workDir != ws {
+		t.Errorf("workDir = %q, want %q", ls.workDir, ws)
+	}
+	// TODO (GREEN): also verify ls.restricted == false
+}
+
+// TestExec_ObserverUsesWorkspaceDir verifies that Exec for an observer-tier
+// sandbox runs commands from the workspace directory.
+func TestExec_ObserverUsesWorkspaceDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses unix pwd")
+	}
+	sh := "/bin/sh"
+	if _, err := os.Stat(sh); err != nil {
+		t.Skip("sh not available")
+	}
+
+	drv := New()
+	ws := t.TempDir()
+	spec := core.RunSpec{
+		AgentID:    "agent-obs-exec",
+		SandboxID:  "sb-obs-exec",
+		Workspace:  core.Workspace{Path: ws},
+		AccessTier: core.AccessObserver,
+	}
+	sb, err := drv.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var out bytes.Buffer
+	exit, execErr := sb.Exec(
+		context.Background(),
+		[]string{sh, "-c", "pwd"},
+		strings.NewReader(""),
+		&out, &out,
+	)
+	if execErr != nil || exit != 0 {
+		t.Fatalf("exec failed: exit=%d err=%v out=%q", exit, execErr, out.String())
+	}
+	got := strings.TrimSpace(out.String())
+	if got != ws {
+		t.Errorf("pwd = %q, want %q", got, ws)
+	}
+}
+
 func TestRunNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/false")

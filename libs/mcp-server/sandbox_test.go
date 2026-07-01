@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -531,4 +535,80 @@ func TestSandboxTools(t *testing.T) {
 			t.Error("expected timeout error, got nil")
 		}
 	})
+}
+
+// TestRealSandboxManager_SendsAccessWorkerTier verifies that
+// RealSandboxManager.Start() sends AccessWorker tier in the hub session
+// create request (delta-spec: spawn child sandbox with worker tier).
+func TestRealSandboxManager_SendsAccessWorkerTier(t *testing.T) {
+	var capturedBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"ID": "test-session-1", "Status": "running"}`)
+	}))
+	defer ts.Close()
+
+	t.Setenv("MEWORK_HUB_URL", ts.URL)
+	t.Setenv("MEWORK_RUNNER_ID", "test-runner-tier")
+
+	mgr := NewRealSandboxManager()
+	_, err := mgr.Start(context.Background(), "test-agent", "test-prompt", "ubuntu:22.04")
+	if err != nil {
+		t.Fatalf("RealSandboxManager.Start: %v", err)
+	}
+
+	var reqBody map[string]interface{}
+	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
+		t.Fatalf("unmarshal captured body: %v", err)
+	}
+	tier, ok := reqBody["access_tier"]
+	if !ok {
+		t.Fatal("request body missing 'access_tier' field -- RealSandboxManager should set AccessWorker")
+	}
+	if tier != "worker" {
+		t.Errorf("access_tier = %v, want 'worker'", tier)
+	}
+}
+
+// TestChildSandbox_StoresAccessTier verifies that spawned sandbox metadata
+// (ChildSandbox) includes the access tier so callers can inspect it.
+func TestChildSandbox_StoresAccessTier(t *testing.T) {
+	fake := newFakeSandboxManager()
+	handler := NewSandboxHandler(fake)
+
+	result, err := handler.SpawnSandbox(context.Background(), map[string]interface{}{
+		"agent_id": "child-tier-test",
+		"prompt":   "test prompt",
+	})
+	if err != nil {
+		t.Fatalf("SpawnSandbox: %v", err)
+	}
+	m := result.(map[string]string)
+	sid := m["sandbox_id"]
+
+	handler.mu.Lock()
+	info, exists := handler.infos[sid]
+	handler.mu.Unlock()
+	if !exists {
+		t.Fatal("child sandbox info not registered")
+	}
+
+	// Use reflection to check for the AccessTier field since it does not yet
+	// exist on ChildSandbox. After the GREEN step adds the field, this
+	// assertion transitions from "field missing" to "field has correct value".
+	v := reflect.ValueOf(info)
+	tierField := v.FieldByName("AccessTier")
+	if !tierField.IsValid() {
+		t.Fatal("ChildSandbox.AccessTier field does not exist -- GREEN step must add it")
+	}
+	tierStr := tierField.String()
+	if tierStr != "worker" {
+		t.Errorf("ChildSandbox.AccessTier = %q, want %q", tierStr, "worker")
+	}
 }

@@ -40,11 +40,13 @@ type fakeDriver struct {
 	sandbox      *fakeSandbox
 	startErr     error
 	destroyCalls int
+	specs        []core.RunSpec // recorded Start specs; checked by AccessTier test
 }
 
 func (d *fakeDriver) Caps() core.SandboxCaps { return core.SandboxCaps{} }
 
 func (d *fakeDriver) Start(ctx context.Context, spec core.RunSpec) (ports.Sandbox, error) {
+	d.specs = append(d.specs, spec)
 	if d.startErr != nil {
 		return nil, d.startErr
 	}
@@ -139,5 +141,31 @@ func TestManagerStart_MountsBoundWorkspace(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestManagerStart_PassesAccessTier verifies that Manager.Start passes
+// spec.AccessTier through to the driver's Start method unchanged.
+func TestManagerStart_PassesAccessTier(t *testing.T) {
+	sb := &fakeSandbox{id: "sb-tier-test"}
+	drv := &fakeDriver{sandbox: sb}
+	m := NewManager(drv)
+
+	spec := core.RunSpec{
+		SandboxID:  "sb-tier-test",
+		AccessTier: core.AccessObserver,
+	}
+
+	_, err := m.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if len(drv.specs) == 0 {
+		t.Fatal("driver.Start was not called -- no specs recorded")
+	}
+	if drv.specs[0].AccessTier != core.AccessObserver {
+		t.Errorf("driver.Start spec.AccessTier = %q, want %q",
+			drv.specs[0].AccessTier, core.AccessObserver)
 	}
 }

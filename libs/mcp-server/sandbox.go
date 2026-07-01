@@ -9,8 +9,9 @@ import (
 
 // ChildSandbox holds the metadata for a tracked child sandbox.
 type ChildSandbox struct {
-	AgentID   string    `json:"agent_id"`
-	CreatedAt time.Time `json:"created_at"`
+	AgentID    string    `json:"agent_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	AccessTier string    `json:"access_tier"`
 }
 
 // SandboxManager defines the interface for sandbox lifecycle operations.
@@ -63,8 +64,9 @@ func (h *SandboxHandler) SpawnSandbox(ctx context.Context, args map[string]inter
 
 	h.mu.Lock()
 	h.infos[sandboxID] = ChildSandbox{
-		AgentID:   agentID,
-		CreatedAt: time.Now(),
+		AgentID:    agentID,
+		CreatedAt:  time.Now(),
+		AccessTier: "worker",
 	}
 	h.mu.Unlock()
 

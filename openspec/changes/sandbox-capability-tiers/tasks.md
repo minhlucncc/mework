@@ -91,9 +91,9 @@ Verification: grep the CLAUDE.md for "observer mode" guidance text.
 
 - [x] Task [1]
 - [x] Task [2]
-- [ ] Task [3]
-- [ ] Task [4]
-- [ ] Task [5]
-- [ ] Task [6]
+- [x] Task [3]
+- [x] Task [4]
+- [x] Task [5]
+- [x] Task [6]
 - [ ] Task [7]
 - [ ] Task [8]

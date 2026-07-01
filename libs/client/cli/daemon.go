@@ -19,6 +19,7 @@ import (
 	"mework/libs/server/bus/memory"
 	"mework/libs/server/session"
 	"mework/libs/shared/config"
+	"mework/libs/shared/core"
 	"mework/libs/shared/grant"
 )
 
@@ -308,6 +309,7 @@ func runOfflineForeground(prof string) error {
 		GrantKey:     key,
 		Broker:       broker,
 		Sessions:     mgr,
+		AccessTier:   core.AccessObserver,
 		// ManagerFor is nil — falls through to runtime.NewManagerFor ("local" engine).
 	})
 	if err != nil {
