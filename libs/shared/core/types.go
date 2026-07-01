@@ -64,6 +64,7 @@ type RunSpec struct {
 	// Workspace, when set, binds the run to a working directory. The zero value
 	// means no workspace is bound and engines fall back to SandboxID-derived dirs.
 	Workspace   Workspace
+	AccessTier  AccessTier
 }
 
 // Result is the output of a completed agent run.
@@ -125,6 +126,30 @@ type ArtifactInfo struct {
 	CreatedAt string
 }
 
+// AccessTier defines the capability level of a sandbox.
+type AccessTier string
+
+const (
+	AccessObserver  AccessTier = "observer"
+	AccessWorker    AccessTier = "worker"
+	AccessIsolated  AccessTier = "isolated"
+)
+
+// DefaultAccessTier returns the default capability tier (AccessWorker) used when
+// no explicit tier is specified.
+func DefaultAccessTier() AccessTier {
+	return AccessWorker
+}
+
+// Default returns the receiver if non-empty; otherwise it returns AccessWorker.
+// This provides a single normalisation point for the empty-string default rule.
+func (t AccessTier) Default() AccessTier {
+	if t == "" {
+		return AccessWorker
+	}
+	return t
+}
+
 // SandboxCaps describes what a sandbox engine can do.
 type SandboxCaps struct {
 	MaxMemoryMB    int
@@ -134,6 +159,7 @@ type SandboxCaps struct {
 	IsIsolated     bool
 	IsRemote       bool
 	DriverName     string
+	AccessTier     AccessTier
 }
 
 // ScheduleKind enumerates the kinds of schedules.

@@ -89,8 +89,8 @@ Verification: grep the CLAUDE.md for "observer mode" guidance text.
 
 ## Task checklist
 
-- [ ] Task [1]
-- [ ] Task [2]
+- [x] Task [1]
+- [x] Task [2]
 - [ ] Task [3]
 - [ ] Task [4]
 - [ ] Task [5]
