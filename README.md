@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/minhlucncc/mework/main/install.sh |
 
 # 2. Scaffold an orchestrator workspace
 mkdir ~/my-cowork && cd ~/my-cowork
-mework init --agent orchestrator
+mework init --agent orchestrator --name mybot
 
 # 3. Set your Mezon bot credentials
 #    Get app_id + api_key at https://mezon.ai/developers/dashboard
@@ -46,8 +46,8 @@ mework provider mezon set --app-id YOUR_APP_ID --api-key YOUR_API_KEY
 mework mezon-worker start
 
 # 5. Chat from Mezon (@your-bot) or from the CLI
-mework agent send orchestrator "explore the workspace" --wait
-mework agent send orchestrator "spawn a sandbox to list this repo" --wait
+mework agent send mybot "explore the workspace"
+mework agent send mybot "spawn a sandbox to list this repo"
 ```
 
 No databases. No server. One binary. The worker auto-initializes
@@ -87,7 +87,7 @@ Setup:    init, login, provider, config, auth
 
 | Command | Purpose |
 |---------|---------|
-| `mework init --agent orchestrator` | Scaffold a workspace with CLAUDE.md + MCP + skills |
+| `mework init --agent orchestrator --name mybot` | Scaffold a workspace with CLAUDE.md + MCP + skills |
 | `mework daemon start` | Start the local agent daemon (server mode) |
 | `mework mezon-worker start` | Start the standalone Mezon bot worker |
 | `mework agent send <name> <msg>` | Send a message to a local or hub agent |
