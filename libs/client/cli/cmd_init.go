@@ -11,7 +11,7 @@ import (
 )
 
 var initWorkspace string
-var initRole string
+var initProvider string
 var initBackend string
 var initName string
 
@@ -21,12 +21,11 @@ var initCmd = &cobra.Command{
 	Long: `Initialize a directory as a mework workspace.
 
 Creates mework.yml, CLAUDE.md, .claude/settings.json with MCP config,
-and optional .claude/skills/ and .claude/commands/ based on the selected
-agent role.
+and optional .claude/skills/ and .claude/commands/ based on the provider (mezon).
 
 Examples:
-  mework init --workspace . --agent orchestrator --name mybot
-  mework init --workspace ./my-project --agent worker
+  mework init --workspace . --name mybot
+  mework init --workspace ./my-project --provider mezon
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := initWorkspace
@@ -39,9 +38,9 @@ Examples:
 		}
 
 		// Find the template.
-		tmplDir := findWorkspaceTemplate(initRole)
+		tmplDir := findWorkspaceTemplate("orchestrator")
 		if tmplDir == "" {
-			return fmt.Errorf("template for agent %q not found", initRole)
+			return fmt.Errorf("template not found")
 		}
 
 		// Copy template files.
@@ -53,14 +52,14 @@ Examples:
 		// Create mework.yml at root.
 		name := initName
 		if name == "" {
-			name = initRole
+			name = "orchestrator"
 		}
 		yml := fmt.Sprintf(`name: %s
 version: "1.0.0"
 engine: local
 backend: %s
 role: %s
-`, name, initBackend, initRole)
+`, name, initBackend, "orchestrator")
 		if err := os.WriteFile(absDir+"/mework.yml", []byte(yml), 0600); err != nil {
 			return fmt.Errorf("write mework.yml: %w", err)
 		}
@@ -79,7 +78,7 @@ role: %s
 		}
 
 		fmt.Printf("mework workspace initialized: %s\n", absDir)
-		fmt.Printf("  role:     %s\n", initRole)
+		fmt.Printf("  provider: mezon\n")
 		fmt.Printf("  backend:  %s\n", initBackend)
 		fmt.Printf("  commands: /sessions, /spawn, /status, /stop\n")
 		fmt.Println()
@@ -174,7 +173,7 @@ func copyWorkspaceTemplate(src, dst, mcpBin string) error {
 
 func init() {
 	initCmd.Flags().StringVar(&initWorkspace, "workspace", "", "Target directory (default: current dir)")
-	initCmd.Flags().StringVar(&initRole, "agent", "orchestrator", "Agent role: orchestrator or worker")
-	initCmd.Flags().StringVar(&initName, "name", "", "Agent name for mework agent send (default: same as --agent)")
+	initCmd.Flags().StringVar(&initProvider, "provider", "mezon", "Provider: mezon (default)")
+	initCmd.Flags().StringVar(&initName, "name", "", "Agent name for mework agent send (default: orchestrator)")
 	initCmd.Flags().StringVar(&initBackend, "backend", "claude", "AI backend (claude, codex, etc.)")
 }
