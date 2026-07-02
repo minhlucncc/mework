@@ -147,6 +147,11 @@ func (m *RealSandboxManager) Destroy(ctx context.Context, sandboxID string) erro
 	return m.client.doJSON("DELETE", fmt.Sprintf("/api/v1/sessions/%s", sandboxID), nil, nil)
 }
 
+func (m *RealSandboxManager) Send(ctx context.Context, sandboxID, message string) error {
+	payload := map[string]string{"message": message}
+	return m.client.doJSON("POST", fmt.Sprintf("/api/v1/sessions/%s/messages", sandboxID), payload, nil)
+}
+
 func (m *RealSandboxManager) Status(ctx context.Context, sandboxID string) (string, string, error) {
 	var info sessionInfo
 	if err := m.client.doJSON("GET", fmt.Sprintf("/api/v1/sessions/%s", sandboxID), nil, &info); err != nil {

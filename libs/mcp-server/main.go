@@ -55,6 +55,11 @@ func main() {
 		mcp.WithString("sandbox_id", mcp.Required(), mcp.Description("Sandbox identifier")),
 		mcp.WithNumber("timeout_seconds", mcp.Description("Max wait time in seconds")),
 	), sandboxH.WaitForSandbox)
+	reg.Register("send_to_sandbox", mcp.NewTool("send_to_sandbox",
+		mcp.WithDescription("Send a message to a running sandbox's stdin"),
+		mcp.WithString("sandbox_id", mcp.Required(), mcp.Description("Sandbox identifier")),
+		mcp.WithString("message", mcp.Required(), mcp.Description("Message content")),
+	), sandboxH.SendToSandbox)
 
 	// Register notification tools.
 	reg.Register("notify_human", mcp.NewTool("notify_human",

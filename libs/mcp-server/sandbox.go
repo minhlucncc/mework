@@ -23,6 +23,7 @@ type SandboxManager interface {
 	Status(ctx context.Context, sandboxID string) (status, result string, err error)
 	List(ctx context.Context) ([]string, error)
 	Wait(ctx context.Context, sandboxID string, timeout time.Duration) (status, result string, err error)
+	Send(ctx context.Context, sandboxID, message string) error
 }
 
 // SandboxHandler implements MCP tool handlers for sandbox lifecycle tools.
@@ -156,6 +157,25 @@ func (h *SandboxHandler) DestroySandbox(ctx context.Context, args map[string]int
 	h.mu.Unlock()
 
 	return map[string]string{"status": "destroyed"}, nil
+}
+
+// SendToSandbox handles the send_to_sandbox tool — sends a message to a
+// running sandbox's stdin. Returns an error if the sandbox is not found
+// or has already completed.
+func (h *SandboxHandler) SendToSandbox(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sandboxID, _ := args["sandbox_id"].(string)
+	message, _ := args["message"].(string)
+	if sandboxID == "" {
+		return nil, fmt.Errorf("sandbox_id is required")
+	}
+	if message == "" {
+		return nil, fmt.Errorf("message is required")
+	}
+
+	if err := h.manager.Send(ctx, sandboxID, message); err != nil {
+		return nil, fmt.Errorf("send to sandbox %s: %w", sandboxID, err)
+	}
+	return map[string]string{"status": "sent"}, nil
 }
 
 // WaitForSandbox handles the wait_for_sandbox tool.

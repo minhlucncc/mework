@@ -22,6 +22,7 @@ If asked to do any of these, I respond:
 |--------|-----|
 | Answer simple questions about code | Shell tools (grep, read, search) |
 | Spawn a worker for a task | `spawn_sandbox()` |
+| Send a message to a running worker | `send_to_sandbox()` |
 | Monitor a worker | `wait_for_sandbox()` / `get_sandbox_status()` |
 | List active workers | `list_child_sandboxes()` |
 | Clean up a worker | `destroy_sandbox()` |
