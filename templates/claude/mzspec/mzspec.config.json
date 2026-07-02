@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/minhlucncc/mzspec/main/mzspec.config.schema.json",
+  "mzspecVersion": "0.12.0",
+  "openspec": {
+    "changesDir": "openspec/changes",
+    "specsDir": "openspec/specs",
+    "archivePattern": "YYYY-MM-DD-{change}",
+    "evidenceDir": "openspec/changes/{change}/evidence"
+  },
+  "git": {
+    "base": "main",
+    "branchPrefix": "feat/",
+    "specBranchPrefix": "spec/",
+    "changelog": "CHANGELOG.md"
+  },
+  "handoffDir": ".handoff/{change}",
+  "toolchains": {
+    "go": {
+      "dirs": ["."],
+      "gates": [
+        { "name": "build", "cmd": "go build ./..." },
+        { "name": "vet", "cmd": "go vet ./..." },
+        { "name": "test", "cmd": "go test -p 1 ./..." }
+      ]
+    }
+  },
+  "metaPrefixes": ["openspec/", "docs/", ".claude/", ".github/"],
+  "always": [{ "name": "openspec-validate", "cmd": "openspec validate \"<change>\" --strict" }],
+  "gatesDir": "gates",
+  "templatesDir": "openspec/templates",
+  "customGates": [],
+  "invariants": []
+}
