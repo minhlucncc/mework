@@ -32,7 +32,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -177,7 +176,7 @@ func buildLandlockRuleset() unix.LandlockRulesetAttr {
 	// ABI v1: filesystem access control (read, write, execute, create, remove).
 	// ABI v2: TCP bind/connect (not needed here).
 	return unix.LandlockRulesetAttr{
-		HandledAccessFS: unix.LANDLOCK_ACCESS_FS_EXECUTE |
+		Access_fs: unix.LANDLOCK_ACCESS_FS_EXECUTE |
 			unix.LANDLOCK_ACCESS_FS_WRITE_FILE |
 			unix.LANDLOCK_ACCESS_FS_READ_FILE |
 			unix.LANDLOCK_ACCESS_FS_READ_DIR |
@@ -204,8 +203,8 @@ func addPathRule(rulesetFD int, path string, access uint64) error {
 	defer unix.Close(fd)
 
 	attr := unix.LandlockPathBeneathAttr{
-		AllowedAccess: access,
-		ParentFd:      uint64(fd),
+		Allowed_access: access,
+		Parent_fd:      int32(fd),
 	}
 
 	_, _, errno := unix.Syscall(unix.SYS_LANDLOCK_ADD_RULE,

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mework-mcp": {
+      "url": "http://localhost:18789/mcp",
+      "description": "Sandbox lifecycle, session management, and notification tools"
+    }
+  }
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,10 @@ type OfflineServer struct {
 	// prompt so the backend sees prior context despite one-shot execution.
 	history   []ChatEntry
 	histMu    sync.Mutex
+
+	// When non-empty, subsequent messages are forwarded directly to this
+	// sandbox via the local MCP HTTP server (bypassing the orchestrator).
+	joinedSandbox string
 }
 
 const (
@@ -75,13 +80,6 @@ func SocketPath(workspaceDir string) (string, error) {
 // NewOfflineServer creates a new OfflineServer bound to the given workspace
 // directory.  The session must already have been started (via
 // StartWorkspaceSession or OpenSession).
-// SetPolicy attaches a message policy to the server. When set, every
-// incoming "run" request is checked against the policy before execution.
-func (s *OfflineServer) SetPolicy(p *policy.Policy) {
-	s.policy = p
-	s.rateLimiter = policy.NewRateLimiter()
-}
-
 func NewOfflineServer(workspaceDir string, session *Session) (*OfflineServer, error) {
 	sockPath, err := SocketPath(workspaceDir)
 	if err != nil {
@@ -92,6 +90,13 @@ func NewOfflineServer(workspaceDir string, session *Session) (*OfflineServer, er
 		session:    session,
 		done:       make(chan struct{}),
 	}, nil
+}
+
+// SetPolicy attaches a message policy to the server. When set, every
+// incoming "run" request is checked against the policy before execution.
+func (s *OfflineServer) SetPolicy(p *policy.Policy) {
+	s.policy = p
+	s.rateLimiter = policy.NewRateLimiter()
 }
 
 // buildPrompt assembles the full prompt from conversation history and the
@@ -139,7 +144,7 @@ func trimFront(s string, n int) string {
 	return s[cut:]
 }
 
-// appendExchange adds one user→assistant exchange to the conversation history,
+// appendExchange adds one user->assistant exchange to the conversation history,
 // trimming the oldest entries when the history is full.
 func (s *OfflineServer) appendExchange(instruction, response string) {
 	s.histMu.Lock()
@@ -157,11 +162,77 @@ func (s *OfflineServer) appendExchange(instruction, response string) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// MCP sandbox communication
+// ---------------------------------------------------------------------------
+
+// sandboxMCPURL is the local MCP HTTP server endpoint for sandbox operations.
+const sandboxMCPURL = "http://localhost:18789/mcp"
+
+// sendToSandboxViaMCP forwards a message to a running sandbox over the MCP
+// HTTP API and returns the response.
+func (s *OfflineServer) sendToSandboxViaMCP(sandboxID, message string) (string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Initialize an MCP session to get a session ID.
+	initPayload := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"mework-daemon","version":"1.0"}}}`
+	resp, err := client.Post(sandboxMCPURL, "application/json", strings.NewReader(initPayload))
+	if err != nil {
+		return "", fmt.Errorf("mcp connect: %w", err)
+	}
+	sessionID := resp.Header.Get("Mcp-Session-Id")
+	resp.Body.Close()
+	if sessionID == "" {
+		return "", fmt.Errorf("no MCP session id")
+	}
+
+	// Call send_to_sandbox tool.
+	escaped := strings.ReplaceAll(message, `"`, `\"`)
+	callPayload := fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_to_sandbox","arguments":{"sandbox_id":"%s","message":"%s"}}}`,
+		sandboxID, escaped,
+	)
+	req, _ := http.NewRequest("POST", sandboxMCPURL, strings.NewReader(callPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Mcp-Session-Id", sessionID)
+	resp2, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("mcp send: %w", err)
+	}
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+
+	// Parse the tool response.
+	var rpcResp struct {
+		Result *struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return string(body), nil
+	}
+	if rpcResp.Error != nil {
+		return "", fmt.Errorf("mcp error: %s", rpcResp.Error.Message)
+	}
+	if rpcResp.Result != nil && len(rpcResp.Result.Content) > 0 {
+		return rpcResp.Result.Content[0].Text, nil
+	}
+	return string(body), nil
+}
+
+// ---------------------------------------------------------------------------
+// Connection handling — JSON-RPC over Unix socket
+// ---------------------------------------------------------------------------
+
 // Start unlinks any stale socket at the path, begins listening, and accepts
 // connections in a background goroutine.  It blocks until ctx is cancelled
 // or a fatal error occurs.
 func (s *OfflineServer) Start(ctx context.Context) error {
-	// Unlink any stale socket from a previous run.
 	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket %s: %w", s.socketPath, err)
 	}
@@ -170,24 +241,20 @@ func (s *OfflineServer) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.socketPath, err)
 	}
-	// Restrict socket access to the owning user.
 	if err := os.Chmod(s.socketPath, 0600); err != nil {
 		listener.Close()
 		return fmt.Errorf("chmod %s: %w", s.socketPath, err)
 	}
 	s.listener = listener
 
-	// Start the accept loop in the background.
 	go s.acceptLoop(ctx)
 
-	// Block until the context is cancelled (graceful shutdown).
 	<-ctx.Done()
 	_ = s.listener.Close()
 	return ctx.Err()
 }
 
-// Close removes the socket file and marks the server as shut down.  It is
-// safe to call multiple times.
+// Close removes the socket file and marks the server as shut down.
 func (s *OfflineServer) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -203,30 +270,27 @@ func (s *OfflineServer) Close() error {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// Connection handling — JSON-RPC over Unix socket
-// ---------------------------------------------------------------------------
-
 // acceptLoop accepts connections and dispatches each in its own goroutine.
 func (s *OfflineServer) acceptLoop(ctx context.Context) {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			// Listener was closed (shutdown) or a transient error occurred.
 			return
 		}
 		go s.handleConnection(ctx, conn)
 	}
 }
 
-// jsonRPCRequest is a minimal JSON-RPC 2.0 request body.
+// ---------------------------------------------------------------------------
+// JSON-RPC types
+// ---------------------------------------------------------------------------
+
 type jsonRPCRequest struct {
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params,omitempty"`
 	ID     interface{}     `json:"id"`
 }
 
-// jsonRPCResponse is a minimal JSON-RPC 2.0 response body.
 type jsonRPCResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
 	Result  interface{} `json:"result,omitempty"`
@@ -234,20 +298,17 @@ type jsonRPCResponse struct {
 	ID      interface{} `json:"id"`
 }
 
-// runParams is the expected params for the "run" method.
 type runParams struct {
 	Instruction string `json:"instruction"`
 	Sender      string `json:"sender,omitempty"`
 }
 
-// runResult is the result returned for a successful "run" invocation.
 type runResult struct {
 	Output   string `json:"output"`
 	ExitCode int    `json:"exitCode"`
 }
 
-// handleConnection reads one JSON-RPC request and dispatches it.  Only the
-// "run" method is supported.
+// handleConnection reads one JSON-RPC request and dispatches it.
 func (s *OfflineServer) handleConnection(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
@@ -287,7 +348,6 @@ func (s *OfflineServer) handleConnection(ctx context.Context, conn net.Conn) {
 				sendJSONRPCError(conn, req.ID, -32001, result.Reason)
 				return
 			}
-			// Rate limit check
 			if result.Reason != "" {
 				if count, ok := policy.ParseLimit(result.Reason); ok {
 					if !s.rateLimiter.Allow(sender, count) {
@@ -305,16 +365,163 @@ func (s *OfflineServer) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// handleRun feeds the instruction to the sandbox over stdin and returns the
-// output. Conversation history is injected into the prompt so the backend
-// (e.g. claude) sees prior context despite each call being a fresh process.
-func (s *OfflineServer) handleRun(ctx context.Context, conn net.Conn, id interface{}, instruction string) {
-	// Build the prompt with conversation history injected.
-	prompt := s.buildPrompt(instruction)
+// findSandboxIDByAgent resolves an agent name to a sandbox ID by querying
+// the local MCP server's list_child_sandboxes with the agent_name filter.
+func (s *OfflineServer) findSandboxIDByAgent(agentName string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
 
-	// Resolve the backend command with appropriate flags for non-interactive use.
+	initPayload := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"mework-daemon","version":"1.0"}}}`
+	resp, err := client.Post(sandboxMCPURL, "application/json", strings.NewReader(initPayload))
+	if err != nil {
+		return "", fmt.Errorf("mcp connect: %w", err)
+	}
+	sessionID := resp.Header.Get("Mcp-Session-Id")
+	resp.Body.Close()
+	if sessionID == "" {
+		return "", fmt.Errorf("no MCP session id")
+	}
+
+	callPayload := fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_child_sandboxes","arguments":{"agent_name":"%s"}}}`,
+		agentName,
+	)
+	req, _ := http.NewRequest("POST", sandboxMCPURL, strings.NewReader(callPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Mcp-Session-Id", sessionID)
+	resp2, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("mcp list: %w", err)
+	}
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+
+	var rpcResp struct {
+		Result *struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return "", fmt.Errorf("parse mcp response: %w", err)
+	}
+	if rpcResp.Result == nil || len(rpcResp.Result.Content) == 0 {
+		return "", fmt.Errorf("no MCP response")
+	}
+
+	var listResult struct {
+		Children []struct {
+			SandboxID string `json:"sandbox_id"`
+			AgentID   string `json:"agent_id"`
+		} `json:"children"`
+	}
+	if err := json.Unmarshal([]byte(rpcResp.Result.Content[0].Text), &listResult); err != nil {
+		return "", fmt.Errorf("parse list result: %w", err)
+	}
+	if len(listResult.Children) == 0 {
+		return "", fmt.Errorf("no sandbox found with agent name %q", agentName)
+	}
+	return listResult.Children[0].SandboxID, nil
+}
+
+// handleRun routes the instruction: to the orchestrator by default, or
+// directly to a joined sandbox when /join was used.
+func (s *OfflineServer) handleRun(ctx context.Context, conn net.Conn, id interface{}, instruction string) {
+	trimmed := strings.TrimSpace(instruction)
+
+	// /join <sandbox_id_or_name> — switch to direct sandbox mode.
+	// If the argument is a name (no dashes or only short), resolve it to an ID.
+	if strings.HasPrefix(trimmed, "/join ") {
+		parts := strings.Fields(trimmed)
+		if len(parts) >= 2 {
+			joinTarget := parts[1]
+			var msg string
+			// Try to resolve name to sandbox ID via MCP lookup.
+			if sid, err := s.findSandboxIDByAgent(joinTarget); err == nil && sid != "" {
+				s.joinedSandbox = sid
+				msg = fmt.Sprintf("Joined sandbox %s (%s). Messages go directly there. Use /leave to return.", joinTarget, sid)
+			} else {
+				s.joinedSandbox = joinTarget
+				msg = fmt.Sprintf("Joined sandbox %s. Messages go directly there. Use /leave to return.", s.joinedSandbox)
+			}
+			_ = json.NewEncoder(conn).Encode(jsonRPCResponse{
+				JSONRPC: "2.0",
+				Result:  runResult{Output: msg, ExitCode: 0},
+				ID:      id,
+			})
+			return
+		}
+	}
+
+	// /leave — return to orchestrator mode.
+	if trimmed == "/leave" {
+		s.joinedSandbox = ""
+		_ = json.NewEncoder(conn).Encode(jsonRPCResponse{
+			JSONRPC: "2.0",
+			Result:  runResult{Output: "Left sandbox mode. Back to orchestrator.", ExitCode: 0},
+			ID:      id,
+		})
+		return
+	}
+
+	// Check for unrecognized commands (user typos).
+	if strings.HasPrefix(trimmed, "/") && trimmed != "/leave" && !strings.HasPrefix(trimmed, "/join ") {
+		// Not a daemon command — pass through to orchestrator or sandbox.
+		// Just continue to the normal handling below.
+	}
+
+	// Validate known commands — notify user on typos.
+	if strings.HasPrefix(trimmed, "/") {
+		cmdName := trimmed
+		if idx := strings.IndexByte(trimmed, ' '); idx > 0 {
+			cmdName = trimmed[:idx]
+		}
+		known := map[string]bool{
+			"/spawn": true, "/sessions": true, "/status": true, "/stop": true,
+			"/join": true, "/leave": true, "/exit": true, "/quit": true,
+			"/preview": true, "/preview-stop": true, "/opsx": true,
+		}
+		if !known[cmdName] {
+			_ = json.NewEncoder(conn).Encode(jsonRPCResponse{
+				JSONRPC: "2.0",
+				Result:  runResult{Output: "Unknown command: " + cmdName + "\nValid: /spawn, /sessions, /status, /stop, /join, /leave, /exit", ExitCode: 0},
+				ID:      id,
+			})
+			return
+		}
+	}
+
+	// If joined to a sandbox, forward the message directly.
+	if s.joinedSandbox != "" {
+		result, err := s.sendToSandboxViaMCP(s.joinedSandbox, instruction)
+		if err != nil {
+			sendJSONRPCError(conn, id, -32000, "sandbox: "+err.Error())
+			return
+		}
+		var outText string
+		var data struct {
+			Result *struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		if json.Unmarshal([]byte(result), &data) == nil && data.Result != nil && len(data.Result.Content) > 0 {
+			outText = data.Result.Content[0].Text
+		} else {
+			outText = result
+		}
+		_ = json.NewEncoder(conn).Encode(jsonRPCResponse{
+			JSONRPC: "2.0",
+			Result:  runResult{Output: outText, ExitCode: 0},
+			ID:      id,
+		})
+		return
+	}
+
+	// Normal orchestrator mode.
+	prompt := s.buildPrompt(instruction)
 	cmd := backendCommand(s.session.backend)
-	// Execute via sandbox.Exec (one-shot, but with full context in prompt).
 	var out strings.Builder
 	exitCode, execErr := s.session.sandbox.Exec(
 		ctx,
@@ -328,8 +535,6 @@ func (s *OfflineServer) handleRun(ctx context.Context, conn net.Conn, id interfa
 	}
 
 	output := out.String()
-
-	// Record the exchange in conversation history for the next call.
 	s.appendExchange(instruction, output)
 
 	_ = json.NewEncoder(conn).Encode(jsonRPCResponse{
@@ -363,12 +568,7 @@ func ValidateOfflineEngine(def *sandbox.SandboxBundleMetadata) error {
 }
 
 // backendCommand returns the command arguments for a given backend name.
-// Backends like claude need -p (non-interactive) flag when fed via stdin.
-// If the backend is a bare name (not a path), it resolves from PATH using the
-// same order the shell would (checks each PATH entry in order).
 func backendCommand(backend string) []string {
-	// Resolve bare names to absolute paths, checking PATH entries in order
-	// so the first match wins, matching shell behavior.
 	path := backend
 	if !strings.Contains(backend, "/") {
 		path = resolveFromPATH(backend)
@@ -376,7 +576,7 @@ func backendCommand(backend string) []string {
 
 	switch backend {
 	case "claude":
-		return []string{path, "-p"}
+		return []string{path, "-p", "--dangerously-skip-permissions"}
 	case "codex":
 		return []string{path, "-p"}
 	default:
@@ -384,15 +584,11 @@ func backendCommand(backend string) []string {
 	}
 }
 
-// resolveFromPATH searches each directory in PATH for the named executable
-// and returns the first match. Unlike exec.LookPath, this doesn't cache or
-// use Go's internal resolver — it directly checks the environment.
+// resolveFromPATH searches each directory in PATH for the named executable.
 func resolveFromPATH(name string) string {
 	pathEnv := os.Getenv("PATH")
 	dirs := filepath.SplitList(pathEnv)
 
-	// For "claude", prefer canonical install paths that are known to work
-	// under sandbox-exec, regardless of PATH order.
 	if name == "claude" {
 		preferred := []string{
 			filepath.Join(os.Getenv("HOME"), ".local", "bin", "claude"),

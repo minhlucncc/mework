@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -368,6 +369,22 @@ func runOfflineForeground(cmdCtx context.Context, prof string) error {
 	defer runner.UnregisterOfflineAgent(meta.Name)
 
 	fmt.Printf("offline agent %q ready\n", meta.Name)
+
+	// Start MCP HTTP server (persistent across chat sessions).
+	mcpPort := 18789
+	mcpBin := "/d/mework/bin/mework-mcp"
+	mcpCmd := exec.CommandContext(ctx, mcpBin)
+	mcpCmd.Env = append(os.Environ(), "MEWORK_MCP_ADDR=:"+strconv.Itoa(mcpPort), "MEWORK_SESSION_ID="+meta.Name)
+	mcpCmd.Stdout = os.Stdout
+	mcpCmd.Stderr = os.Stderr
+	if err := mcpCmd.Start(); err != nil {
+		return fmt.Errorf("start mcp: %w", err)
+	}
+	defer mcpCmd.Process.Kill()
+	time.Sleep(300 * time.Millisecond)
+
+
+
 
 	// Block until SIGINT/SIGTERM, then clean up.
 	if err := srv.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {

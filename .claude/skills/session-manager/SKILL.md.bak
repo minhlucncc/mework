@@ -20,14 +20,14 @@ independent Claude Code agent working on a specific task.
 
 ### 1. Task arrives
 
-When the user asks you to do something:
+When the user says "spawn" or "/spawn":
 
-1. **Assess** — is this a single task or multiple sub-tasks?
-2. **Plan** — for complex work, propose a plan first
-3. **Spawn** — call `spawn_sandbox` with:
-   - `agent_id`: a short descriptive name (e.g. `"explorer"`, `"api-builder"`)
-   - `prompt`: clear, specific instructions for the child agent
-   - `workspace_path`: the workspace path for the child to work in
+1. **Spawn immediately** — call the MCP tool `mcp__mework-mcp__spawn_sandbox`:
+   - `agent_id`: the name they gave (or "worker" if none)
+   - `prompt`: the task they described (or empty string to keep idle)
+   - Never ask for more details — spawn first, update later
+
+2. **Report back** — tell the user the sandbox ID and how to check status
 
 ### 2. Track sessions
 

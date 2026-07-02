@@ -1,12 +1,15 @@
-// Binary mework-mcp is an stdio-based MCP server that exposes mework's sandbox
+// Binary mework-mcp is a stdio-based MCP server that exposes mework's sandbox
 // lifecycle, session context, and notification capabilities as callable tools
-// for an AI agent orchestrator.
+// for an AI agent orchestrator. When MEWORK_MCP_ADDR is set, it runs in HTTP
+// (Streamable HTTP) mode instead.
 package main
 
 import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,14 +22,20 @@ var (
 	date    = "unknown"
 )
 
-
 func main() {
 	reg := NewToolRegistry()
 
 	// Wire up handlers.
-	// In production the daemon connection is configured via environment variables;
-	// for standalone/dev mode handlers degrade gracefully when unset.
-	sandboxH := NewSandboxHandler(NewRealSandboxManager())
+	var sandboxMgr SandboxManager
+	runnerID := os.Getenv("MEWORK_RUNNER_ID")
+	if runnerID != "" {
+		sandboxMgr = NewRealSandboxManager()
+		log.Printf("using hub-backed sandbox manager (runner %s)", runnerID)
+	} else {
+		sandboxMgr = NewLocalSandboxManager()
+		log.Println("using local sandbox manager (no hub)")
+	}
+	sandboxH := NewSandboxHandler(sandboxMgr)
 	notifyH := NewNotifyHandler(NewRealBusBroker())
 	sessionH := NewSessionHandler()
 
@@ -38,6 +47,7 @@ func main() {
 		mcp.WithString("image", mcp.Description("Container image (default: ubuntu:22.04)")),
 		mcp.WithNumber("timeout_minutes", mcp.Description("Max run time in minutes")),
 		mcp.WithString("workspace_path", mcp.Description("Workspace path to mount")),
+			mcp.WithString("parent_id", mcp.Description("Orchestrator session ID that owns this sandbox")),
 	), sandboxH.SpawnSandbox)
 	reg.Register("get_sandbox_status", mcp.NewTool("get_sandbox_status",
 		mcp.WithDescription("Get status of a child sandbox"),
@@ -45,6 +55,8 @@ func main() {
 	), sandboxH.GetSandboxStatus)
 	reg.Register("list_child_sandboxes", mcp.NewTool("list_child_sandboxes",
 		mcp.WithDescription("List all active child sandboxes"),
+			mcp.WithString("parent_id", mcp.Description("Filter: only children of this parent")),
+			mcp.WithString("agent_name", mcp.Description("Filter: find sandbox by agent name")),
 	), sandboxH.ListChildSandboxes)
 	reg.Register("destroy_sandbox", mcp.NewTool("destroy_sandbox",
 		mcp.WithDescription("Stop and destroy a child sandbox"),
@@ -87,8 +99,26 @@ func main() {
 	mcpServer := server.NewMCPServer("mework-mcp", "1.0.0")
 	mcpServer.AddTools(reg.ServerTools()...)
 
-	s := server.NewStdioServer(mcpServer)
-	if err := s.Listen(context.Background(), os.Stdin, os.Stdout); err != nil {
-		log.Fatalf("mework-mcp: %v", err)
+	// Mode selection: HTTP (MEWORK_MCP_ADDR set) or stdio (default).
+	addr := os.Getenv("MEWORK_MCP_ADDR")
+	if addr != "" {
+		// HTTP mode (Streamable HTTP) — run as a standalone server.
+		s := server.NewStreamableHTTPServer(mcpServer)
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		go func() {
+			log.Printf("mework-mcp listening on %s/mcp", addr)
+			if err := s.Start(addr); err != nil {
+				log.Fatalf("mework-mcp: %v", err)
+			}
+		}()
+		<-ctx.Done()
+		_ = s.Shutdown(context.Background())
+	} else {
+		// Stdio mode — Claude Code spawns us as a subprocess via settings.json.
+		s := server.NewStdioServer(mcpServer)
+		if err := s.Listen(context.Background(), os.Stdin, os.Stdout); err != nil {
+			log.Fatalf("mework-mcp: %v", err)
+		}
 	}
 }

@@ -256,11 +256,13 @@ If asked to do any of these, I respond:
 | Action | How |
 |--------|-----|
 | Answer simple questions about code | Shell tools (grep, read, search) |
-| Spawn a worker for a task | `spawn_sandbox()` |
-| Monitor a worker | `wait_for_sandbox()` / `get_sandbox_status()` |
-| List active workers | `list_child_sandboxes()` |
-| Clean up a worker | `destroy_sandbox()` |
-| Communicate with human | `notify_human()` / `ask_human()` |
+| Spawn a worker | `mcp__mework-mcp__spawn_sandbox` |
+| List active workers | `mcp__mework-mcp__list_child_sandboxes` |
+| Get worker status | `mcp__mework-mcp__get_sandbox_status` |
+| Wait for worker | `mcp__mework-mcp__wait_for_sandbox` |
+| Send to worker | `mcp__mework-mcp__send_to_sandbox` |
+| Destroy worker | `mcp__mework-mcp__destroy_sandbox` |
+| Communicate with human | `mcp__mework-mcp__notify_human` / `mcp__mework-mcp__ask_human` |
 | Simple GitHub ops (merge, comment) | `gh mcp` — but ask human first |
 
 ## Worker types
@@ -274,11 +276,11 @@ If asked to do any of these, I respond:
 ## Delegation pattern
 
 ```
+```
 Human: "Implement dark mode"
-  → Spawn implementation-agent worker:
-      spawn_sandbox(agent_id="impl-dark-mode",
-        prompt="Propose, spec, and ship dark mode support",
-        workspace_path="...", timeout_minutes=60)
-  → wait_for_sandbox(sandbox_id)
-  → notify_human("Dark mode PR #123 is open")
+  → Call mcp__mework-mcp__spawn_sandbox(agent_id="impl-dark-mode",
+      prompt="Propose, spec, and ship dark mode support", timeout_minutes=60)
+  → Call mcp__mework-mcp__wait_for_sandbox(sandbox_id)
+  → Call mcp__mework-mcp__notify_human("Dark mode PR #123 is open")
+```
 

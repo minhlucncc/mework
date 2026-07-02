@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 
@@ -45,12 +46,21 @@ Examples:
 
 		sender := resolveSender()
 
+		// Indicator for joined sandbox mode (updated atomically from response parsing).
+		var joined atomic.Value
+		joined.Store("")
+
 		fmt.Printf("Chatting with %q. Type your message and press Enter. /exit to quit.\n", name)
 		fmt.Println(strings.Repeat("-", 40))
 
 		scanner := bufio.NewScanner(os.Stdin)
 		for {
-			fmt.Print("> ")
+			// Show prompt with joined indicator if in sandbox mode.
+			prefix := "> "
+			if j := joined.Load().(string); j != "" {
+				prefix = fmt.Sprintf("\033[33m[joined: %s]\033[0m > ", j)
+			}
+			fmt.Print(prefix)
 			if !scanner.Scan() {
 				break
 			}
@@ -68,6 +78,17 @@ Examples:
 				continue
 			}
 			if output != "" {
+				// Check for join/leave indicators in the response.
+				if strings.HasPrefix(output, "Joined sandbox ") {
+					sandboxID := strings.TrimPrefix(output, "Joined sandbox ")
+					if idx := strings.IndexAny(sandboxID, ". "); idx > 0 {
+						sandboxID = sandboxID[:idx]
+					}
+					joined.Store(sandboxID)
+				} else if strings.HasPrefix(output, "Left sandbox mode") {
+					joined.Store("")
+				}
+
 				// Print last non-empty line for cleaner display
 				lines := strings.Split(strings.TrimSpace(output), "\n")
 				for _, l := range lines {
