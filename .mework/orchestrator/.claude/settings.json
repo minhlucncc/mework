@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mework-mcp": {
+      "command": "/d/mework/bin/mework-mcp"
+    },
+    "github": {
+      "command": "gh",
+      "args": ["mcp"]
+    }
+  }
+}
