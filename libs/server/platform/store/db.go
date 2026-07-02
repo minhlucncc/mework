@@ -16,18 +16,20 @@ import (
 
 // Store encapsulates the database handles for either driver backend.
 //
-// The legacy callers (mework-server main.go, etc.) read `.Pool` for the
-// Postgres-backed deployment. For SQLite deployments the new wiring
-// surfaces handles via `.SQLite`; `.Pool` is nil. This shape keeps the
-// signature of NewStore stable for every caller while letting the
-// existing dispatch logic choose the right driver.
+// Use DB() to get a *sql.DB that works with both Postgres and SQLite
+// via the standard database/sql interface. The legacy .Pool and .SQLite
+// fields remain for backward compatibility.
 type Store struct {
 	// Pool is non-nil when the Postgres driver was selected.
 	Pool *pgxpool.Pool
 	// SQLite is non-nil when the modernc.org/sqlite driver was selected.
-	// Callers targeting the offline stack should switch on its presence.
 	SQLite *sqlite.Store
+	db     *sql.DB // unified database handle for both backends
 }
+
+// DB returns a *sql.DB that works for both Postgres and SQLite.
+// Services should use this instead of Pool directly for driver-agnostic queries.
+func (s *Store) DB() *sql.DB { return s.db }
 
 // NewStore dispatches on the scheme of the DSN to the matching driver.
 //
@@ -116,7 +118,12 @@ func newPostgresStore(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &Store{Pool: pool}, nil
+	sqlDB, err := sql.Open("pgx", dsn)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("failed to open sql.DB: %w", err)
+	}
+	return &Store{Pool: pool, db: sqlDB}, nil
 }
 
 // newSQLiteStore opens the SQLite driver via the modernc.org/sqlite
@@ -132,7 +139,7 @@ func newSQLiteStore(ctx context.Context, dsn string) (*Store, error) {
 		s.Close()
 		return nil, err
 	}
-	return &Store{SQLite: s}, nil
+	return &Store{SQLite: s, db: s.DB}, nil
 }
 
 // Close gracefully closes the active driver's pool, if any. Safe to

@@ -35,7 +35,7 @@ type StartOptions struct {
 	GrantKey []byte
 	// ManagerFor builds the sandbox manager for a named engine; nil uses the
 	// default local-by-default engine dispatch.
-	ManagerFor func(engine string) *runtime.Manager
+	ManagerFor func(engine string) (*runtime.Manager, error)
 	// Broker streams turn events.
 	Broker bus.Broker
 	// Sessions owns the session lifecycle.

@@ -157,6 +157,10 @@ func (f *fakeProc) LookPath(file string) (string, error) {
 func (f *fakeProc) Start(ctx context.Context, name string, args []string, env []string, stdoutPath string) (pid int, port int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Extract basename so both "mework-server" and "/path/to/mework-server" match.
+	if base := filepath.Base(name); base != name && base != "" && base != "." {
+		name = base
+	}
 	switch name {
 	case "mework-server":
 		if f.serverStart != nil {

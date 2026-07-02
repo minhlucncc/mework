@@ -119,7 +119,7 @@ func TestProcessSessionDispatch_OpenAndTurns(t *testing.T) {
 
 	// Route OpenSession's ManagerFor (inside the session deps) to our fake driver.
 	origMgrFor := sessionRuntimeManagerFor
-	sessionRuntimeManagerFor = func(string) *runtime.Manager { return runtime.NewManager(drv) }
+	sessionRuntimeManagerFor = func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil }
 	t.Cleanup(func() { sessionRuntimeManagerFor = origMgrFor })
 
 	// The broker the session publishes its events to is the real httpBroker, so
@@ -261,7 +261,7 @@ func TestProcessSessionDispatch_WorkspaceBindsDir(t *testing.T) {
 
 	drv := &liveFakeDriver{}
 	origMgrFor := sessionRuntimeManagerFor
-	sessionRuntimeManagerFor = func(string) *runtime.Manager { return runtime.NewManager(drv) }
+	sessionRuntimeManagerFor = func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil }
 	t.Cleanup(func() { sessionRuntimeManagerFor = origMgrFor })
 
 	origBrokerFor := sessionBrokerFor

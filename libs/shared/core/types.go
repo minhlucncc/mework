@@ -61,6 +61,11 @@ type RunSpec struct {
 	Env         map[string]string
 	ResourceLimits *ResourceLimits
 	Timeout      time.Duration
+	// RequiresNet requires the engine to support networking. The manager enforces
+	// this against SandboxCaps.SupportsNet before starting the sandbox.
+	RequiresNet bool
+	// RequiresGPU requires the engine to support GPU access.
+	RequiresGPU bool
 	// Workspace, when set, binds the run to a working directory. The zero value
 	// means no workspace is bound and engines fall back to SandboxID-derived dirs.
 	Workspace   Workspace
@@ -217,6 +222,48 @@ type ResourceLimits struct {
 	CPU    string `json:"cpu,omitempty"`
 	Memory string `json:"memory,omitempty"`
 	Disk   string `json:"disk,omitempty"`
+}
+
+// Validate checks that resource limit values are well-formed. Empty fields
+// are valid (no limit). Non-empty fields must be parseable quantities.
+func (rl ResourceLimits) Validate() error {
+	if rl.CPU != "" {
+		if _, err := parseQuantity(rl.CPU); err != nil {
+			return fmt.Errorf("invalid CPU limit %q: %w", rl.CPU, err)
+		}
+	}
+	if rl.Memory != "" {
+		if _, err := parseQuantity(rl.Memory); err != nil {
+			return fmt.Errorf("invalid memory limit %q: %w", rl.Memory, err)
+		}
+	}
+	if rl.Disk != "" {
+		if _, err := parseQuantity(rl.Disk); err != nil {
+			return fmt.Errorf("invalid disk limit %q: %w", rl.Disk, err)
+		}
+	}
+	return nil
+}
+
+// parseQuantity parses a resource quantity string (e.g. "512m", "0.5", "10GiB")
+// into a numeric value. Returns the parsed value or an error.
+func parseQuantity(s string) (float64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	// Trim known suffixes and multiply.
+	var val float64
+	var suffix string
+	if n, err := fmt.Sscanf(s, "%f%s", &val, &suffix); n >= 1 && err == nil {
+		if val <= 0 {
+			return 0, fmt.Errorf("quantity must be positive: %f", val)
+		}
+		return val, nil
+	}
+	if _, err := fmt.Sscanf(s, "%f", &val); err != nil {
+		return 0, fmt.Errorf("cannot parse %q as a quantity", s)
+	}
+	return val, nil
 }
 
 // SandboxState describes the lifecycle state of a sandbox.

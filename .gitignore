@@ -80,3 +80,6 @@ worktrees/
 yarn-debug.log*
 yarn-error.log*
 yarn.lock
+/mework
+/mework-server
+libs/client/cli/--*

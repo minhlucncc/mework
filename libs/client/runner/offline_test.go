@@ -143,7 +143,7 @@ func newOfflineSession(t *testing.T, wsDir string) (*Session, *offlineFakeDriver
 		WorkspaceDir: wsDir,
 		Caller:       caller,
 		GrantKey:     key,
-		ManagerFor:   func(string) *runtime.Manager { return runtime.NewManager(drv) },
+		ManagerFor:   func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil },
 		Broker:       broker,
 		Sessions:     mgr,
 	})

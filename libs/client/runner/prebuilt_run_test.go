@@ -80,11 +80,11 @@ func (d *fakeDriver) Destroy(context.Context, string) error { return nil }
 func newFakeDeps(res DefinitionResolver, drv *fakeDriver, gotEngine *string) RunDeps {
 	return RunDeps{
 		Resolver: res,
-		ManagerFor: func(engine string) *runtime.Manager {
+		ManagerFor: func(engine string) (*runtime.Manager, error) {
 			if gotEngine != nil {
 				*gotEngine = engine
 			}
-			return runtime.NewManager(drv)
+			return runtime.NewManager(drv), nil
 		},
 	}
 }
@@ -268,7 +268,7 @@ func TestRunByReference_WorkspaceBinding(t *testing.T) {
 			drv := &fakeDriver{}
 			deps := RunDeps{
 				Resolver:   fakeResolver{defs: defs},
-				ManagerFor: func(string) *runtime.Manager { return runtime.NewManager(drv) },
+				ManagerFor: func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil },
 				Workspace:  tt.workspace,
 			}
 
@@ -296,7 +296,7 @@ func TestRunByReference_OneAgentPerSandbox(t *testing.T) {
 	// start collides on the same SandboxID and the duplicate guard fires.
 	deps := RunDeps{
 		Resolver:   fakeResolver{defs: defs},
-		ManagerFor: func(string) *runtime.Manager { return mgr },
+		ManagerFor: func(string) (*runtime.Manager, error) { return mgr, nil },
 		SandboxID:  "fixed-sandbox-id",
 	}
 

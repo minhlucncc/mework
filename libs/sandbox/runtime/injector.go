@@ -60,7 +60,7 @@ func (inj *SecretInjectorImpl) Inject(ctx context.Context, sandboxID string, sou
 		// The file path contains the sandboxID so it is scoped to this
 		// dispatch only.
 		secretFile := filepath.Join(sandboxSecretsDir, secret.Name)
-		if err := os.WriteFile(secretFile, []byte(secret.Source), 0400); err != nil {
+		if err := os.WriteFile(secretFile, []byte(secret.Value), 0400); err != nil {
 			return fmt.Errorf("write secret file %s: %w", secretFile, err)
 		}
 	}

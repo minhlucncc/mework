@@ -7,16 +7,22 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // executeDaemonStart sets flags on daemonStartCmd and calls RunE directly,
-// returning captured stdout and any error.
-func executeDaemonStart(t *testing.T, flags map[string]string) (string, error) {
+// returning captured stdout and any error. If ctx is non-nil the command runs
+// with that context; otherwise context.Background() is used.
+func executeDaemonStart(t *testing.T, flags map[string]string, ctx context.Context) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	daemonStartCmd.SetOut(&out)
 	daemonStartCmd.SetErr(&out)
-	daemonStartCmd.SetContext(context.Background())
+	if ctx != nil {
+		daemonStartCmd.SetContext(ctx)
+	} else {
+		daemonStartCmd.SetContext(context.Background())
+	}
 	for k, v := range flags {
 		if err := daemonStartCmd.Flags().Set(k, v); err != nil {
 			return "", err
@@ -33,7 +39,7 @@ func TestStartOfflineMissingWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MEWORK_HOME", home)
 
-	_, err := executeDaemonStart(t, map[string]string{"offline": "true"})
+	_, err := executeDaemonStart(t, map[string]string{"offline": "true"}, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -52,7 +58,7 @@ func TestStartOfflineBadWorkspaceDir(t *testing.T) {
 	_, err := executeDaemonStart(t, map[string]string{
 		"offline":   "true",
 		"workspace": "/nonexistent/path",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -73,7 +79,7 @@ func TestStartOfflineNoMeworkYml(t *testing.T) {
 	_, err := executeDaemonStart(t, map[string]string{
 		"offline":   "true",
 		"workspace": dir,
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -97,15 +103,20 @@ func TestStartOfflineValidWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Use a cancellable context so RunE does not block forever.
+	// Use a cancellable context so the daemon does not block forever.
+	// Cancel from a goroutine to avoid a deadlock: executeDaemonStart blocks
+	// on srv.Start(ctx) which waits for ctx.Done(); without a goroutine the
+	// defer cancel() would never run.
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	daemonStartCmd.SetContext(ctx)
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		cancel()
+	}()
 
 	_, err := executeDaemonStart(t, map[string]string{
 		"offline":   "true",
 		"workspace": dir,
-	})
+	}, ctx)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -127,7 +138,7 @@ func TestStartOfflineRejectsNonLocalEngine(t *testing.T) {
 	_, err := executeDaemonStart(t, map[string]string{
 		"offline":   "true",
 		"workspace": dir,
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

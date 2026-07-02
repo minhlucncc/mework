@@ -51,7 +51,7 @@ mework init --workspace . --agent claude --name mybot --provider mezon
 mework provider mezon set --app-id YOUR_APP_ID --api-key YOUR_API_KEY
 
 # 4. Start the offline stack (daemon + server + worker, all supervised)
-mework daemon start --offline --with-mezon
+mework daemon start --offline --with-mezon --workspace .
 
 # 5. Chat with your agent from Mezon (@your-bot)…
 #    …or stay on the CLI:

@@ -140,7 +140,7 @@ func newPrebuiltDeps(t *testing.T, backendName string, idle time.Duration) (runn
 
 	deps := runnerpkg.SessionDeps{
 		Resolver:   prebuiltResolver{backendName: backendName},
-		ManagerFor: func(string) *sbruntime.Manager { return sbruntime.NewManager(drv) },
+		ManagerFor: func(string) (*sbruntime.Manager, error) { return sbruntime.NewManager(drv), nil },
 		Broker:     broker,
 		Sessions:   mgr,
 		GrantKey:   nil,
@@ -454,7 +454,7 @@ func TestPrebuiltAgentSandbox_UnknownReferenceRejected(t *testing.T) {
 
 	res := runnerpkg.RunByReference(ctx, "does-not-exist@9.9.9", "hello", runnerpkg.RunDeps{
 		Resolver:   deps.Resolver,
-		ManagerFor: func(string) *sbruntime.Manager { return sbruntime.NewManager(drv) },
+		ManagerFor: func(string) (*sbruntime.Manager, error) { return sbruntime.NewManager(drv), nil },
 	})
 	if res.Error == "" {
 		t.Errorf("RunByReference with unknown reference should return a not-found error, got %+v", res)

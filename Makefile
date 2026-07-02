@@ -1,5 +1,6 @@
 # Mello CLI daemon and Mework server — build/test/release targets.
 
+GO           ?= go
 BINARY         := mework
 CMD            := ./apps/mework
 SERVER_BINARY  := mework-server
@@ -16,16 +17,16 @@ LDFLAGS        := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X m
 build: build-mework build-mework-server build-mework-mezon-worker
 
 build-mework:
-	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
 build-mework-server:
-	go build -ldflags "$(LDFLAGS)" -o bin/$(SERVER_BINARY) $(SERVER_CMD)
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/$(SERVER_BINARY) $(SERVER_CMD)
 
 WORKER_BINARY  := mework-mezon-worker
 WORKER_CMD     := ./apps/mework-mezon-worker
 
 build-mework-mezon-worker:
-	go build -ldflags "$(LDFLAGS)" -o bin/$(WORKER_BINARY) $(WORKER_CMD)
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/$(WORKER_BINARY) $(WORKER_CMD)
 
 server: build-mework-server
 
@@ -34,13 +35,13 @@ MODULES := libs/shared libs/server libs/client libs/sandbox libs/tests libs/tool
 test:
 	@for mod in $(MODULES); do \
 		echo "--- $$mod ---"; \
-		(cd $$mod && go test -p 1 ./...) || exit 1; \
+		(cd $$mod && $(GO) test -p 1 ./...) || exit 1; \
 	done
 
 vet:
 	@for mod in $(MODULES); do \
 		echo "--- $$mod ---"; \
-		(cd $$mod && go vet ./...) || exit 1; \
+		(cd $$mod && $(GO) vet ./...) || exit 1; \
 	done
 
 # Start a local postgres container for tests
@@ -51,11 +52,11 @@ test-db:
 lint:
 	golangci-lint run ./... || echo "golangci-lint not installed; skipping"
 	@echo "--- import-guard ---"
-	cd libs/tools && go test ./import-guard/...
+	cd libs/tools && $(GO) test ./import-guard/...
 
 install:
-	go install -ldflags "$(LDFLAGS)" $(CMD)
-	go install -ldflags "$(LDFLAGS)" $(SERVER_CMD)
+	$(GO) install -ldflags "$(LDFLAGS)" $(CMD)
+	$(GO) install -ldflags "$(LDFLAGS)" $(SERVER_CMD)
 
 # Cross-compile a local snapshot via goreleaser (no publish).
 snapshot:
@@ -67,30 +68,30 @@ clean:
 # ---- Per-module build/test targets ----
 
 build-shared:
-	cd libs/shared && go build ./...
+	cd libs/shared && $(GO) build ./...
 
 build-server:
-	cd libs/server && go build ./...
+	cd libs/server && $(GO) build ./...
 
 build-client:
-	cd libs/client && go build ./...
+	cd libs/client && $(GO) build ./...
 
 build-sandbox:
-	cd libs/sandbox && go build ./...
+	cd libs/sandbox && $(GO) build ./...
 
 build-all: build-shared build-server build-client build-sandbox
 
 test-shared:
-	cd libs/shared && go test ./...
+	cd libs/shared && $(GO) test ./...
 
 test-server:
-	cd libs/server && go test ./...
+	cd libs/server && $(GO) test ./...
 
 test-client:
-	cd libs/client && go test ./...
+	cd libs/client && $(GO) test ./...
 
 test-sandbox:
-	cd libs/sandbox && go test ./...
+	cd libs/sandbox && $(GO) test ./...
 
 test-all: test-shared test-server test-client test-sandbox
 

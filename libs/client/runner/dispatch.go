@@ -16,8 +16,14 @@ import (
 	"mework/libs/sandbox/runtime"
 	"mework/libs/shared/core"
 	"mework/libs/shared/grant"
+	"mework/libs/shared/policy"
 	"mework/libs/shared/transport"
 )
+
+// dispatchPolicy, if set, is enforced before each dispatch. The daemon sets
+// this at startup from the runner's configuration. A nil policy means all
+// dispatches are allowed (subject to grant enforcement).
+var dispatchPolicy *policy.Policy
 
 // processOpts holds external dependencies for the dispatch lifecycle.
 type processOpts struct {
@@ -30,10 +36,11 @@ type processOpts struct {
 // processDispatch handles the full lifecycle of a single dispatch:
 //  1. Parse and verify the permission grant carried by the dispatch.
 //  2. Enforce required operations (pull, spawn) against the grant.
-//  3. Pull the referenced agent version from the catalog.
-//  4. Run the agent via the sandbox runtime.
-//  5. Report the terminal result (done / failed / refused) to the hub.
-//  6. Acknowledge the SSE message so it is not redelivered.
+//  3. Enforce any dispatch-level policy rules.
+//  4. Pull the referenced agent version from the catalog.
+//  5. Run the agent via the sandbox runtime.
+//  6. Report the terminal result (done / failed / refused) to the hub.
+//  7. Acknowledge the SSE message so it is not redelivered.
 func processDispatch(ctx context.Context, d transport.Dispatch, eventID string, opts processOpts) error {
 	// 1. Parse and verify grant integrity.
 	g, err := parseAndVerifyGrant(d.Grant, []byte(opts.secret))
@@ -51,7 +58,28 @@ func processDispatch(ctx context.Context, d transport.Dispatch, eventID string, 
 		return ackAndReturn(ctx, opts, eventID, err)
 	}
 
-	// 3. Pull agent from catalog.
+	// 3. Enforce dispatch-level policy (before pulling agent).
+	if dispatchPolicy != nil {
+		result, err := dispatchPolicy.Enforce(policy.Attributes{
+			"action":   "dispatch",
+			"agent":    d.Agent.Name,
+			"version":  d.Agent.Version,
+			"session":  d.Session,
+			"runner":   d.Runner,
+			"owner":    d.Owner,
+			"tenant":   d.Tenant,
+		})
+		if err != nil {
+			return ackAndReturn(ctx, opts, eventID, fmt.Errorf("policy evaluation error: %w", err))
+		}
+		if !result.Allowed {
+			log.Printf("policy denied dispatch for agent %s: %s", d.Agent.Name, result.Reason)
+			reportRefused(ctx, opts, d.Session, fmt.Sprintf("policy denied: %s", result.Reason))
+			return ackAndReturn(ctx, opts, eventID, fmt.Errorf("policy denied: %s", result.Reason))
+		}
+	}
+
+	// 4. Pull agent from catalog.
 	artifact, err := pullAgent(ctx, opts.catalogURL, d.Agent, d.Grant)
 	if err != nil {
 		return ackAndReturn(ctx, opts, eventID, fmt.Errorf("pull agent: %w", err))

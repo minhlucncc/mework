@@ -104,7 +104,13 @@ func (a *PATAuthenticator) Middleware(next http.Handler) http.Handler {
 			}
 			devTenantID := os.Getenv("MEWORK_DEV_TENANT")
 			if devTenantID == "" {
-				devTenantID = "00000000-0000-0000-0000-000000000001"
+			devTenantID = "00000000-0000-0000-0000-000000000001"
+			}
+			// Ensure the dev account exists so enrollment does not hit FK errors.
+			if a.Pool != nil {
+				_, _ = a.Pool.Exec(r.Context(),
+					"INSERT INTO accounts (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+					devAccountID, "dev-account")
 			}
 			ctx := context.WithValue(r.Context(), AccountIDKey, devAccountID)
 			ctx = context.WithValue(ctx, PATTokenKey, patToken)

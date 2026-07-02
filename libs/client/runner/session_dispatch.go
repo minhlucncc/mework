@@ -49,7 +49,7 @@ var (
 	// sessionRuntimeManagerFor maps an engine name to a sandbox runtime.Manager
 	// for the opened session. When nil, OpenSession falls back to the default
 	// local-by-default engine dispatch. Tests inject a fake-driver manager here.
-	sessionRuntimeManagerFor func(engine string) *runtime.Manager
+	sessionRuntimeManagerFor func(engine string) (*runtime.Manager, error)
 )
 
 // SetSessionResolverFactory wires the factory used to build the catalog-backed

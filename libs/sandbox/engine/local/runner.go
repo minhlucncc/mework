@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 
 	"mework/libs/sandbox/agent"
+	"mework/libs/sandbox/engine/sandboxexec"
 	"mework/libs/shared/core"
 	"mework/libs/shared/ports"
 )
@@ -21,8 +23,34 @@ import (
 // Driver implements ports.SandboxDriver for the local subprocess engine.
 type Driver struct{}
 
-// New creates a new local Driver.
-func New() *Driver { return &Driver{} }
+// New creates a new Driver for the local engine.
+//
+// On macOS, if sandbox-exec is available, it returns a sandboxexec.Driver
+// instead — wrapping the subprocess in a "no-write" Seatbelt profile that
+// prevents writes outside allowed paths.
+//
+// On Linux 5.13+ with Landlock LSM enabled, it returns a landlockDriver that
+// restricts filesystem access to the working directory and system libraries.
+//
+// Non-macOS platforms and systems without sandbox-exec or Landlock fall back
+// to the raw subprocess (no isolation, logged as a warning).
+func New() ports.SandboxDriver {
+	// macOS: prefer sandbox-exec for basic write isolation.
+	if d := sandboxexec.New(); d != nil {
+		log.Println("local: using sandbox-exec (no-write profile) for filesystem write isolation")
+		return d
+	}
+
+	// Linux 5.13+: prefer Landlock LSM for filesystem access restriction.
+	if d := newLandlockDriver(); d != nil {
+		log.Printf("local: using Landlock LSM (ABI v%d) for filesystem isolation", d.abiVersion())
+		return d
+	}
+
+	// Non-macOS or no Landlock: log a warning and return the raw driver.
+	log.Println("WARNING: local engine provides NO host isolation — use only for trusted agents")
+	return &Driver{}
+}
 
 // Caps returns the capabilities of this driver.
 func (d *Driver) Caps() core.SandboxCaps {

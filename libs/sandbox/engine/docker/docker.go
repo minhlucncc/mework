@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,12 +79,17 @@ func (s *dockerSandbox) Signals(ctx context.Context, sig string) error {
 	return exec.CommandContext(ctx, "docker", "kill", "-s", sig, s.containerID).Run()
 }
 
-// resolveImage returns the image to use.
+// resolveImage returns the image to use. Logs a warning when the image lacks
+// a pinned digest (@sha256:...), since unpinned images can change silently.
 func resolveImage(spec core.RunSpec) string {
-	if spec.Image != "" {
-		return spec.Image
+	image := spec.Image
+	if image == "" {
+		image = "ubuntu:22.04"
 	}
-	return "ubuntu:22.04"
+	if !strings.Contains(image, "@sha256:") {
+		log.Printf("WARNING: image %q has no pinned digest — add @sha256:... for supply-chain safety", image)
+	}
+	return image
 }
 
 // Start creates and starts a Docker container for the agent run.
@@ -130,16 +136,88 @@ func (d *Driver) createContainer(ctx context.Context, spec core.RunSpec, image, 
 		"--mount", fmt.Sprintf("type=bind,source=%s,target=/work", workDir),
 	}
 
+	// === Security hardening ===
+
+	// 1. Drop all Linux capabilities, add back only what's strictly needed.
+	//    CHOWN, DAC_OVERRIDE, SETUID, SETGID, FOWNER are the minimum for
+	//    package installers (npm, pip, apt).
+	args = append(args,
+		"--cap-drop=ALL",
+		"--cap-add=CHOWN",
+		"--cap-add=DAC_OVERRIDE",
+		"--cap-add=SETUID",
+		"--cap-add=SETGID",
+		"--cap-add=FOWNER",
+	)
+
+	// 2. Prevent privilege escalation via setuid binaries.
+	args = append(args, "--security-opt", "no-new-privileges:true")
+
+	// 3. Read-only rootfs prevents writes to /etc/, /usr/, etc.
+	//    Mount tmpfs for directories that need writes (/tmp, /home).
+	args = append(args,
+		"--read-only",
+		"--tmpfs", "/tmp:rw,noexec,nosuid,size=100m",
+		"--tmpfs", "/var/tmp:rw,noexec,nosuid,size=100m",
+		"--tmpfs", "/run:rw,noexec,nosuid,size=50m",
+	)
+
+	// 4. Run as non-root user for privilege de-escalation.
+	args = append(args, "--user", "nobody:nogroup")
+
+	// 5. Default resource limits — always enforced, never optional.
+	memory := "512m"
+	cpu := "0.5"
+	pidsLimit := "100"
 	if rl := spec.ResourceLimits; rl != nil {
 		if rl.Memory != "" {
-			args = append(args, "--memory", rl.Memory)
+			memory = rl.Memory
 		}
 		if rl.CPU != "" {
-			args = append(args, "--cpus", rl.CPU)
+			cpu = rl.CPU
+		}
+	}
+	args = append(args,
+		"--memory", memory,
+		"--cpus", cpu,
+		"--pids-limit", pidsLimit,
+	)
+
+	// 6. Apply seccomp profile (bundled allowlist) if available.
+	seccompPath, seccompErr := writeSeccompProfile()
+	if seccompErr == nil && seccompPath != "" {
+		args = append(args, "--security-opt", "seccomp="+seccompPath)
+	}
+	if seccompErr != nil {
+		log.Printf("WARNING: could not write seccomp profile: %v", seccompErr)
+	}
+
+	// 7. Disk storage limit from ResourceLimits.
+	if rl := spec.ResourceLimits; rl != nil && rl.Disk != "" {
+		if size, err := parseDiskLimit(rl.Disk); err == nil {
+			args = append(args, "--storage-opt", fmt.Sprintf("size=%d", size))
+		} else {
+			log.Printf("WARNING: invalid disk limit %q: %v", rl.Disk, err)
 		}
 	}
 
+	// 8. Network: default none, opt-in via env.
+	//    When MEWORK_NETWORK=1, use Docker's internal network (no internet
+	//    egress) unless MEWORK_EGRESS=1 is also set.
+	hasNetwork := spec.Env["MEWORK_NETWORK"] == "1"
+	allowEgress := spec.Env["MEWORK_EGRESS"] == "1"
+	if !hasNetwork {
+		args = append(args, "--network", "none")
+	} else if !allowEgress {
+		args = append(args, "--network", "internal")
+	}
+	// hasNetwork && allowEgress → default bridge (internet access)
+
 	for k, v := range spec.Env {
+		// Skip internal env vars (don't pass to container)
+		if k == "MEWORK_NETWORK" || k == "MEWORK_EGRESS" {
+			continue
+		}
 		args = append(args, "-e", k+"="+v)
 	}
 
@@ -197,3 +275,43 @@ func ensureImage(ctx context.Context, image string) error {
 func containerName(id string) string {
 	return "mework-" + id
 }
+
+// parseDiskLimit parses a disk size string (e.g. "10GiB", "500MiB", "1GiB")
+// into bytes. Supports: B, KiB, MiB, GiB, TiB suffixes.
+func parseDiskLimit(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty disk limit")
+	}
+
+	var multiplier int64 = 1
+	switch {
+	case strings.HasSuffix(s, "TiB"):
+		multiplier = 1 << 40
+		s = strings.TrimSuffix(s, "TiB")
+	case strings.HasSuffix(s, "GiB"):
+		multiplier = 1 << 30
+		s = strings.TrimSuffix(s, "GiB")
+	case strings.HasSuffix(s, "MiB"):
+		multiplier = 1 << 20
+		s = strings.TrimSuffix(s, "MiB")
+	case strings.HasSuffix(s, "KiB"):
+		multiplier = 1 << 10
+		s = strings.TrimSuffix(s, "KiB")
+	case strings.HasSuffix(s, "B"):
+		multiplier = 1
+		s = strings.TrimSuffix(s, "B")
+	default:
+		// Assume bytes if no suffix.
+	}
+
+	var val float64
+	if _, err := fmt.Sscanf(s, "%f", &val); err != nil {
+		return 0, fmt.Errorf("invalid size %q: %w", s, err)
+	}
+	if val <= 0 {
+		return 0, fmt.Errorf("disk limit must be positive: %f", val)
+	}
+	return int64(val * float64(multiplier)), nil
+}
+

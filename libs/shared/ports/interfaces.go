@@ -138,10 +138,11 @@ type RunnerSelector interface {
 	Select(ctx context.Context, tenant string, criteria SelectionCriteria) (string, error)
 }
 
-// SecretRef identifies a secret to inject.
+// SecretRef identifies a secret to inject, with its resolved value.
 type SecretRef struct {
-	Name string
+	Name  string
 	Source string
+	Value string // The actual secret value to materialize
 }
 
 // SecretInjector injects grant-scoped secrets into a sandbox.

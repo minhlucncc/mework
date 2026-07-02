@@ -32,7 +32,7 @@ type SessionDeps struct {
 	Resolver DefinitionResolver
 	// ManagerFor builds the sandbox manager for a named engine. When nil, the
 	// default runtime.NewManagerFor (local-by-default) engine dispatch is used.
-	ManagerFor func(engine string) *runtime.Manager
+	ManagerFor func(engine string) (*runtime.Manager, error)
 	// Broker is the message bus used to stream turn events.
 	Broker bus.Broker
 	// Sessions owns the create/attach/close lifecycle and idle reaping.
@@ -91,7 +91,10 @@ func OpenSession(ctx context.Context, ref string, caller Caller, deps SessionDep
 	if engine == "" {
 		engine = "local"
 	}
-	mgr := managerFor(engine)
+	mgr, mgrErr := managerFor(engine)
+	if mgrErr != nil {
+		return nil, fmt.Errorf("sandbox engine %q: %w", engine, mgrErr)
+	}
 
 	info, err := deps.Sessions.Create(ctx, def.Name, def.Version, "", caller.Account, caller.Tenant)
 	if err != nil {
@@ -144,8 +147,9 @@ func (s *Session) Send(ctx context.Context, caller Caller, content string) error
 
 	// stdin-not-argv: the backend name forms the command; the turn content is fed
 	// over stdin so attacker-controllable content never reaches the command line.
+	cmd := backendCommand(s.backend)
 	var out strings.Builder
-	exitCode, execErr := s.sandbox.Exec(turnCtx, []string{s.backend}, strings.NewReader(content), &out, &out)
+	exitCode, execErr := s.sandbox.Exec(turnCtx, cmd, strings.NewReader(content), &out, &out)
 
 	s.mu.Lock()
 	s.cancelCur = nil

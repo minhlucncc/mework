@@ -78,8 +78,11 @@ func (g *Grant) Permits(op Operation) bool {
 }
 
 // VerifyGrant verifies the grant's integrity signature using the
-// provided key. Returns nil if the signature is valid or if the
-// grant was created unsigned (no key).
+// provided key. Returns nil if the signature is valid or the grant
+// was created unsigned (backward-compatible).
+//
+// To enforce signed grants in production, call VerifyGrantSigned
+// instead of this function.
 func VerifyGrant(g *Grant, key []byte) error {
 	if len(g.Sig) == 0 {
 		return nil // unsigned grant — skip verification
@@ -98,4 +101,13 @@ func VerifyGrant(g *Grant, key []byte) error {
 		return errors.New("grant signature verification failed")
 	}
 	return nil
+}
+
+// VerifyGrantSigned is like VerifyGrant but rejects unsigned grants.
+// Use this in production paths where grant integrity is required.
+func VerifyGrantSigned(g *Grant, key []byte) error {
+	if len(g.Sig) == 0 {
+		return errors.New("unsigned grant rejected: signature is empty")
+	}
+	return VerifyGrant(g, key)
 }

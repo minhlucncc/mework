@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -45,8 +46,12 @@ type Runtime struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
+// Service handles runner enrollment and registration token lifecycle.
+// It supports both Postgres (via pgxpool.Pool) and SQLite (via *sql.DB).
+// Use NewService for Postgres, NewServiceDB for SQLite.
 type Service struct {
 	pool      *pgxpool.Pool
+	db        *sql.DB // used when pool is nil (SQLite mode)
 	serverKey string
 }
 
@@ -57,16 +62,57 @@ func NewService(pool *pgxpool.Pool, serverKey string) *Service {
 	}
 }
 
+// NewServiceDB creates a Service backed by *sql.DB (works with both
+// Postgres via pgx stdlib and SQLite). Used for offline mode.
+func NewServiceDB(db *sql.DB, serverKey string) *Service {
+	return &Service{
+		db:        db,
+		serverKey: serverKey,
+	}
+}
+
 // RegisterTenant allocates a fresh, isolated tenant namespace and returns it.
 // Each registration yields a stable, distinct TenantID; no resources are shared
 // with any existing tenant.
+// queryRow returns a row-like interface with a Scan method,
+// wrapping either pgxpool.QueryRow or *sql.DB.QueryRowContext.
+func (s *Service) queryRow(ctx context.Context, query string, args ...any) scannable {
+	if s.db != nil {
+		return s.db.QueryRowContext(ctx, query, args...)
+	}
+	return s.pool.QueryRow(ctx, query, args...)
+}
+
+// scannable is satisfied by both *sql.Row (SQLite) and pgx.Row (Postgres).
+type scannable interface {
+	Scan(dest ...any) error
+}
+
+// pgxResult wraps pgconn.CommandTag to satisfy sql.Result.
+type pgxResult struct{ cmd pgconn.CommandTag }
+
+func (r pgxResult) LastInsertId() (int64, error) { return 0, errors.New("not supported") }
+func (r pgxResult) RowsAffected() (int64, error) { return r.cmd.RowsAffected(), nil }
+
+// exec executes a query on either the pgxpool or *sql.DB backend.
+func (s *Service) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if s.db != nil {
+		return s.db.ExecContext(ctx, query, args...)
+	}
+	cmd, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgxResult{cmd: cmd}, nil
+}
+
 func (s *Service) RegisterTenant(ctx context.Context, name string) (*Tenant, error) {
 	if name == "" {
 		return nil, errors.New("tenant name is required")
 	}
 
 	var ten Tenant
-	err := s.pool.QueryRow(ctx, `
+	err := s.queryRow(ctx, `
 		INSERT INTO tenants (name)
 		VALUES ($1)
 		RETURNING id, name
@@ -103,7 +149,7 @@ func (s *Service) IssueRegistrationToken(ctx context.Context, tenant Tenant, opt
 	}
 
 	lookup := token.ComputeLookup(rawToken, s.serverKey)
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.exec(ctx, `
 		INSERT INTO registration_tokens (tenant_id, account_id, token_lookup, expires_at)
 		VALUES ($1, $2, $3, NOW() + $4::interval)
 	`, tenant.ID, accountIDParam, lookup, fmt.Sprintf("%d seconds", int(o.ttl.Seconds())))
@@ -120,13 +166,13 @@ func (s *Service) IssueRegistrationToken(ctx context.Context, tenant Tenant, opt
 func (s *Service) LookupRegistrationToken(ctx context.Context, rawToken string) (*RegistrationToken, error) {
 	lookup := token.ComputeLookup(rawToken, s.serverKey)
 	var rec RegistrationToken
-	err := s.pool.QueryRow(ctx, `
+	err := s.queryRow(ctx, `
 		SELECT id, tenant_id, COALESCE(account_id::text, ''), expires_at, consumed_at
 		FROM registration_tokens
 		WHERE token_lookup = $1 AND consumed_at IS NULL AND expires_at > NOW()
 	`, lookup).Scan(&rec.ID, &rec.TenantID, &rec.AccountID, &rec.ExpiresAt, &rec.ConsumedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrInvalidRegistrationToken
 		}
 		return nil, err
@@ -159,7 +205,7 @@ func (s *Service) EnrollRunnerWithSpecs(ctx context.Context, rawToken, accountID
 	// Validate specs against the agent catalog before token lookup.
 	for _, sp := range specs {
 		var exists bool
-		err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM agents WHERE name = $1)", sp).Scan(&exists)
+		err := s.queryRow(ctx, "SELECT EXISTS (SELECT 1 FROM agents WHERE name = $1)", sp).Scan(&exists)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +244,7 @@ func (s *Service) CreateRuntime(ctx context.Context, tenant Tenant, accountID, c
 
 	var rt Runtime
 	if len(specs) > 0 {
-		err = s.pool.QueryRow(ctx, `
+		err = s.queryRow(ctx, `
 			INSERT INTO runtimes (tenant_id, account_id, code, label, token_lookup, specs)
 			VALUES ($1, $2, $3, $4, $5, $6)
 			RETURNING id, tenant_id, account_id, code, label, last_seen_at, status, created_at, specs
@@ -206,7 +252,7 @@ func (s *Service) CreateRuntime(ctx context.Context, tenant Tenant, accountID, c
 			&rt.ID, &rt.TenantID, &rt.AccountID, &rt.Code, &rt.Label, &rt.LastSeenAt, &rt.Status, &rt.CreatedAt, &rt.Specs,
 		)
 	} else {
-		err = s.pool.QueryRow(ctx, `
+		err = s.queryRow(ctx, `
 			INSERT INTO runtimes (tenant_id, account_id, code, label, token_lookup)
 			VALUES ($1, $2, $3, $4, $5)
 			RETURNING id, tenant_id, account_id, code, label, last_seen_at, status, created_at, specs
@@ -260,7 +306,7 @@ func (s *Service) ListRunners(ctx context.Context, tenant Tenant, accountID stri
 // tenant — is invisible: deleting it returns ErrNotFound rather than a forbidden error,
 // so cross-tenant and cross-account access are denied by construction.
 func (s *Service) DeleteRuntime(ctx context.Context, tenant Tenant, accountID, id string) error {
-	cmd, err := s.pool.Exec(ctx, `
+	cmd, err := s.exec(ctx, `
 		DELETE FROM runtimes
 		WHERE tenant_id = $1 AND account_id = $2 AND id = $3
 	`, tenant.ID, accountID, id)
@@ -268,7 +314,8 @@ func (s *Service) DeleteRuntime(ctx context.Context, tenant Tenant, accountID, i
 		return err
 	}
 
-	if cmd.RowsAffected() == 0 {
+	n, _ := cmd.RowsAffected()
+	if n == 0 {
 		return ErrNotFound
 	}
 
@@ -278,7 +325,7 @@ func (s *Service) DeleteRuntime(ctx context.Context, tenant Tenant, accountID, i
 // UpdateRuntimeSpecs updates the specs column of a runtime. Used by the heartbeat
 // handler so a runner can update its declared agent spec capabilities at runtime.
 func (s *Service) UpdateRuntimeSpecs(ctx context.Context, runtimeID string, specs []string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE runtimes SET specs = $1 WHERE id = $2`, specs, runtimeID)
+	_, err := s.exec(ctx, `UPDATE runtimes SET specs = $1 WHERE id = $2`, specs, runtimeID)
 	return err
 }
 
@@ -287,7 +334,7 @@ func (s *Service) UpdateRuntimeSpecs(ctx context.Context, runtimeID string, spec
 // Returns ErrNotFound if no eligible runner is online.
 func (s *Service) SelectWorker(ctx context.Context, spec string, tenant Tenant) (*Runtime, error) {
 	var rt Runtime
-	err := s.pool.QueryRow(ctx, `
+	err := s.queryRow(ctx, `
 		SELECT id, tenant_id, account_id, code, label, last_seen_at, status, created_at, specs
 		FROM runtimes
 		WHERE tenant_id = $1 AND (specs @> ARRAY[$2] OR specs IS NULL)
@@ -297,7 +344,7 @@ func (s *Service) SelectWorker(ctx context.Context, spec string, tenant Tenant) 
 		&rt.ID, &rt.TenantID, &rt.AccountID, &rt.Code, &rt.Label, &rt.LastSeenAt, &rt.Status, &rt.CreatedAt, &rt.Specs,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err

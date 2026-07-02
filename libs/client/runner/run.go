@@ -36,8 +36,11 @@ func Run(ctx context.Context, profile string, cfg *config.Config) error {
 		log.Printf("using AI backend %s (%s)", backend.Name, backend.Path)
 	}
 
-	// Select sandbox driver from config (default "local").
-	mgr := runtime.NewManagerFor(cfg.Daemon.SandboxEngine)
+	// Select sandbox driver from config.
+	mgr, mgrErr := runtime.NewManagerFor(cfg.Daemon.SandboxEngine)
+	if mgrErr != nil {
+		return fmt.Errorf("sandbox engine %q: %w", cfg.Daemon.SandboxEngine, mgrErr)
+	}
 	caps := mgr.Caps()
 	log.Printf("using sandbox driver %q (isolated=%v)", caps.DriverName, caps.IsIsolated)
 

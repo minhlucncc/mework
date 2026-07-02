@@ -79,6 +79,7 @@ type RunOpts struct {
 	ServerLog    string
 	WorkerLog    string
 	ServerURL    string // base URL for enrollment (when caller pre-spawned)
+	DatabaseURL  string // overrides the SQLite default
 	ListenAddr   string // "127.0.0.1:0"
 	ReadyTimeout time.Duration
 	StopTimeout  time.Duration
@@ -370,9 +371,14 @@ func (s *OfflineStack) runFullStack(ctx context.Context, opts RunOpts) error {
 	}
 
 	// Build server env.
-	dbURL := "sqlite://" + filepath.Join(opts.Workspace, ".mework", "data.db")
-	if err := os.MkdirAll(filepath.Dir(strings.TrimPrefix(dbURL, "sqlite://")), 0o700); err != nil {
-		return fmt.Errorf("server boot: mkdir data: %w", err)
+	dbURL := opts.DatabaseURL
+	if dbURL == "" {
+		dbURL = "sqlite://" + filepath.Join(opts.Workspace, ".mework", "data.db")
+	}
+	if strings.HasPrefix(dbURL, "sqlite:") {
+		if err := os.MkdirAll(filepath.Dir(strings.TrimPrefix(dbURL, "sqlite://")), 0o700); err != nil {
+			return fmt.Errorf("server boot: mkdir data: %w", err)
+		}
 	}
 
 	listenAddr := opts.ListenAddr
@@ -556,7 +562,7 @@ func (s *OfflineStack) enrollRunner(ctx context.Context, serverURL, tokenPath st
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// 1. Mint registration token.
-	regReqBody, _ := json.Marshal(map[string]string{"tenant_id": "default"})
+	regReqBody, _ := json.Marshal(map[string]string{"tenant_id": "00000000-0000-0000-0000-000000000001"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		serverURL+"/api/v1/runners/registration-tokens",
 		strings.NewReader(string(regReqBody)))
@@ -564,10 +570,8 @@ func (s *OfflineStack) enrollRunner(ctx context.Context, serverURL, tokenPath st
 		return fmt.Errorf("build registration request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Stub: with no auth, the real server returns 401. For offline mode the
-	// server's PAT isn't available; we rely on the local-only enforcement
-	// (loopback + auto-sealed creds) so we skip auth here. In production,
-	// this path is only reached when --offline is set.
+	// Offline mode: use a dummy bearer token to pass the PAT middleware.
+	req.Header.Set("Authorization", "Bearer offline-dev-token")
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("registration-tokens request: %w", err)
@@ -659,7 +663,7 @@ func (s *OfflineStack) bootWorker(ctx context.Context, opts RunOpts, serverPort 
 		workerBin = resolved
 	}
 	// Pass basename to proc.Start so the test fake's switch matches.
-	workerName := filepath.Base(workerBin)
+	workerName := workerBin
 
 	logPath := opts.WorkerLog
 	if logPath == "" {
@@ -781,6 +785,43 @@ func loadMezonCreds() (appID, apiKey string) {
 	return appID, apiKey
 }
 
+// ensurePostgres auto-starts a Postgres container via Docker.
+// Returns the connection URL or "" if Docker is unavailable.
+func ensurePostgres(lookPath func(string) (string, error)) string {
+	if _, err := lookPath("docker"); err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "docker", "info").Run(); err != nil {
+		return ""
+	}
+	containerName := "mework-pg"
+	_ = exec.Command("docker", "start", containerName).Run()
+	if exec.Command("docker", "inspect", containerName).Run() != nil {
+		out, err := exec.Command("docker", "run", "-d",
+			"--name", containerName,
+			"-p", "5433:5432",
+			"-e", "POSTGRES_PASSWORD=postgres",
+			"-e", "POSTGRES_DB=mework",
+			"postgres:16-alpine").CombinedOutput()
+		if err != nil {
+			fmt.Printf("offline: could not start Postgres: %v\n%s", err, string(out))
+			return ""
+		}
+	}
+	for i := 0; i < 10; i++ {
+		if exec.Command("docker", "exec", containerName, "pg_isready", "-U", "postgres").Run() == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	_ = exec.Command("docker", "exec", containerName, "psql", "-U", "postgres",
+		"-c", "CREATE DATABASE mework_offline").Run()
+	fmt.Println("offline: Postgres ready on port 5433")
+	return "postgres://postgres:postgres@localhost:5433/mework_offline"
+}
+
 // signalAndWait sends sig to pid, schedules a SIGKILL after stopTimeout in
 // the background, and returns immediately. This is the
 // SIGTERM → StopTimeout → SIGKILL escalation contract from the spec — the
@@ -844,11 +885,11 @@ func scanLogForPort(logPath string) (int, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		const prefix = "Listening on "
-		if !strings.HasPrefix(line, prefix) {
+		const marker = "Listening on "
+		if !strings.Contains(line, marker) {
 			continue
 		}
-		addr := strings.TrimPrefix(line, prefix)
+		addr := line[strings.Index(line, marker)+len(marker):]
 		// addr may be "127.0.0.1:52345" or ":52345".
 		if i := strings.LastIndex(addr, ":"); i >= 0 {
 			p, err := strconv.Atoi(addr[i+1:])

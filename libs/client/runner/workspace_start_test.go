@@ -165,7 +165,7 @@ func TestStartWorkspaceSession_ServerMode(t *testing.T) {
 		Resolver:     fakeResolver{defs: defs},
 		WorkspaceDir: wsDir,
 		Caller:       Caller{Account: testOwner, Tenant: testTenant, Grant: g},
-		ManagerFor:   func(string) *runtime.Manager { return runtime.NewManager(drv) },
+		ManagerFor:   func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil },
 		Broker:       broker,
 		Sessions:     mgr,
 	})
@@ -214,7 +214,7 @@ func TestStartWorkspaceSession_LocalDirectMode(t *testing.T) {
 		WorkspaceDir: wsDir,
 		Caller:       Caller{Account: testOwner, Tenant: testTenant, Grant: localGrant},
 		GrantKey:     key,
-		ManagerFor:   func(string) *runtime.Manager { return runtime.NewManager(drv) },
+		ManagerFor:   func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil },
 		Broker:       broker,
 		Sessions:     mgr,
 	})
@@ -278,7 +278,7 @@ func TestStartWorkspaceSession_MissingSpawnGrantRejected(t *testing.T) {
 				Resolver:     fileWorkspaceResolver{workspaceDir: wsDir},
 				WorkspaceDir: wsDir,
 				Caller:       Caller{Account: testOwner, Tenant: testTenant, Grant: g},
-				ManagerFor:   func(string) *runtime.Manager { return runtime.NewManager(drv) },
+				ManagerFor:   func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil },
 				Broker:       broker,
 				Sessions:     mgr,
 			})
@@ -318,7 +318,7 @@ func TestStartWorkspaceSession_ArtifactsReadableBack(t *testing.T) {
 		WorkspaceDir: wsDir,
 		Caller:       caller,
 		GrantKey:     key,
-		ManagerFor:   func(string) *runtime.Manager { return runtime.NewManager(drv) },
+		ManagerFor:   func(string) (*runtime.Manager, error) { return runtime.NewManager(drv), nil },
 		Broker:       broker,
 		Sessions:     mgr,
 	})

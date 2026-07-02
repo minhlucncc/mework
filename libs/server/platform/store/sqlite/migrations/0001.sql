@@ -168,3 +168,19 @@ CREATE TABLE IF NOT EXISTS runner_identity (
     last_seen_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS registration_tokens (
+    id TEXT PRIMARY KEY,
+    token_lookup TEXT NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL,
+    account_id TEXT,
+    expires_at TIMESTAMP,
+    consumed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tenants (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

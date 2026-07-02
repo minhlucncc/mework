@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,7 +55,12 @@ func main() {
 	log.Println("Database connection established.")
 
 	// 4. Initialize server
-	srvInstance := hub.NewServer(dbStore.Pool, cfg)
+	var srvInstance *hub.Server
+	if dbStore.Pool != nil {
+		srvInstance = hub.NewServer(dbStore.Pool, cfg)
+	} else {
+		srvInstance = hub.NewSQLiteServer(dbStore, cfg, cfg.ServerKey)
+	}
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: srvInstance,
@@ -90,8 +96,12 @@ func main() {
 	}()
 
 	// 6. Start HTTP server
-	log.Printf("Listening on %s", cfg.ListenAddr)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	listener, lerr := net.Listen("tcp", cfg.ListenAddr)
+	if lerr != nil {
+		log.Fatalf("Failed to listen: %v", lerr)
+	}
+	log.Printf("Listening on %s", listener.Addr().String())
+	if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("HTTP server failed: %v", err)
 	}
 

@@ -24,13 +24,14 @@ type DefinitionResolver interface {
 }
 
 // RunDeps carries the injectable dependencies for RunByReference so the
-// resolver and the engine→manager mapping can be faked in tests.
+// resolver and the engine->manager mapping can be faked in tests.
 type RunDeps struct {
 	// Resolver maps a reference to a definition.
 	Resolver DefinitionResolver
 	// ManagerFor builds the sandbox manager for a named engine. When nil, the
-	// default runtime.NewManagerFor (local-by-default) engine dispatch is used.
-	ManagerFor func(engine string) *runtime.Manager
+	// default runtime.NewManagerFor engine dispatch is used. Returns an error
+	// for unknown engine names.
+	ManagerFor func(engine string) (*runtime.Manager, error)
 	// SandboxID overrides the sandbox ID; when empty it is derived from the ref.
 	SandboxID string
 	// Workspace, when set, binds the run's sandbox to a working directory. The
@@ -39,10 +40,10 @@ type RunDeps struct {
 }
 
 // RunByReference runs a prebuilt definition by reference as a one-shot: it
-// resolves the definition, maps its engine through ManagerFor (default local),
-// starts the sandbox, and runs the agent backend feeding the instruction over
-// stdin — never argv. An unresolved reference yields a not-found result before
-// any sandbox is started. Container engines run from the definition's pinned
+// resolves the definition, maps its engine through ManagerFor, starts the
+// sandbox, and runs the agent backend feeding the instruction over stdin —
+// never argv. An unresolved reference yields a not-found result before any
+// sandbox is started. Container engines run from the definition's pinned
 // image; the local engine ignores it. The manager's running map enforces
 // one-agent-per-sandbox, surfaced here as the duplicate-sandbox error.
 func RunByReference(ctx context.Context, ref, instruction string, deps RunDeps) core.Result {
@@ -60,7 +61,10 @@ func RunByReference(ctx context.Context, ref, instruction string, deps RunDeps) 
 	if engine == "" {
 		engine = "local"
 	}
-	mgr := managerFor(engine)
+	mgr, mgrErr := managerFor(engine)
+	if mgrErr != nil {
+		return core.Result{Error: fmt.Sprintf("sandbox engine %q: %v", engine, mgrErr)}
+	}
 
 	sandboxID := deps.SandboxID
 	if sandboxID == "" {

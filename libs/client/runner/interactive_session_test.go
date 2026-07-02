@@ -183,8 +183,8 @@ func newSessionDeps(t *testing.T, idle time.Duration, blockTurn bool) (SessionDe
 
 	deps := SessionDeps{
 		Resolver: fakeResolver{defs: defs},
-		ManagerFor: func(string) *runtime.Manager {
-			return runtime.NewManager(drv)
+		ManagerFor: func(string) (*runtime.Manager, error) {
+			return runtime.NewManager(drv), nil
 		},
 		Broker:   broker,
 		Sessions: mgr,

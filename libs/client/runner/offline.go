@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -311,11 +312,13 @@ func (s *OfflineServer) handleRun(ctx context.Context, conn net.Conn, id interfa
 	// Build the prompt with conversation history injected.
 	prompt := s.buildPrompt(instruction)
 
+	// Resolve the backend command with appropriate flags for non-interactive use.
+	cmd := backendCommand(s.session.backend)
 	// Execute via sandbox.Exec (one-shot, but with full context in prompt).
 	var out strings.Builder
 	exitCode, execErr := s.session.sandbox.Exec(
 		ctx,
-		[]string{s.session.backend},
+		cmd,
 		strings.NewReader(prompt),
 		&out, &out,
 	)
@@ -357,6 +360,57 @@ func ValidateOfflineEngine(def *sandbox.SandboxBundleMetadata) error {
 		return fmt.Errorf("offline mode supports only 'local' engine, got %q", def.Engine)
 	}
 	return nil
+}
+
+// backendCommand returns the command arguments for a given backend name.
+// Backends like claude need -p (non-interactive) flag when fed via stdin.
+// If the backend is a bare name (not a path), it resolves from PATH using the
+// same order the shell would (checks each PATH entry in order).
+func backendCommand(backend string) []string {
+	// Resolve bare names to absolute paths, checking PATH entries in order
+	// so the first match wins, matching shell behavior.
+	path := backend
+	if !strings.Contains(backend, "/") {
+		path = resolveFromPATH(backend)
+	}
+
+	switch backend {
+	case "claude":
+		return []string{path, "-p"}
+	case "codex":
+		return []string{path, "-p"}
+	default:
+		return []string{path}
+	}
+}
+
+// resolveFromPATH searches each directory in PATH for the named executable
+// and returns the first match. Unlike exec.LookPath, this doesn't cache or
+// use Go's internal resolver — it directly checks the environment.
+func resolveFromPATH(name string) string {
+	pathEnv := os.Getenv("PATH")
+	dirs := filepath.SplitList(pathEnv)
+
+	// For "claude", prefer canonical install paths that are known to work
+	// under sandbox-exec, regardless of PATH order.
+	if name == "claude" {
+		preferred := []string{
+			filepath.Join(os.Getenv("HOME"), ".local", "bin", "claude"),
+		}
+		for _, p := range preferred {
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0111 != 0 {
+				return p
+			}
+		}
+	}
+
+	for _, dir := range dirs {
+		candidate := filepath.Join(dir, name)
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && fi.Mode()&0111 != 0 {
+			return candidate
+		}
+	}
+	return name
 }
 
 // Compile-time interface check.

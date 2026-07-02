@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"fmt"
+	"log"
 
 	"mework/libs/shared/core"
 	"mework/libs/shared/policy"
@@ -35,6 +36,15 @@ var knownEngines = map[string]bool{
 	"custom":     true,
 }
 
+// knownBackends is the allowlist of AI CLI backends a definition may select.
+// Adding a new backend here is how support for new CLIs is declared.
+var knownBackends = map[string]bool{
+	"claude":   true,
+	"codex":    true,
+	"opencode": true,
+	"v0":       true,
+}
+
 // containerEngines are engines that materialize from a pre-baked image. Such
 // engines require a pinned image so the sandbox installs nothing at run time.
 // Engines absent from this set (e.g. "local") ignore the image field.
@@ -52,8 +62,8 @@ func (m SandboxBundleMetadata) UsesImage() bool {
 }
 
 // Validate checks that the definition is well-formed: name and version are
-// required, the engine must be a known engine, the backend must be non-empty,
-// and container engines must pin an image. The local engine ignores the image.
+// required, the engine must be a known engine, the backend must be a known
+// backend, and container engines must pin an image.
 func (m SandboxBundleMetadata) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("name is required")
@@ -67,8 +77,33 @@ func (m SandboxBundleMetadata) Validate() error {
 	if m.Backend == "" {
 		return fmt.Errorf("backend is required")
 	}
+	if !knownBackends[m.Backend] {
+		log.Printf("WARNING: backend %q is not in the known-backend allowlist (%v)", m.Backend, mapKeys(knownBackends))
+	}
 	if containerEngines[m.Engine] && m.Image == "" {
 		return fmt.Errorf("engine %q requires a pinned image", m.Engine)
 	}
+
+	// Validate resource limits if set.
+	if m.ResourceLimits != nil {
+		if err := m.ResourceLimits.Validate(); err != nil {
+			return fmt.Errorf("invalid resource limits: %w", err)
+		}
+	}
+
+	// Warn if container engine has no policy defined.
+	if containerEngines[m.Engine] && m.Policy == nil {
+		log.Printf("WARNING: container engine %q has no policy — no message-level access control", m.Engine)
+	}
+
 	return nil
+}
+
+// mapKeys returns the keys of a string-keyed map as a slice, for logging.
+func mapKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

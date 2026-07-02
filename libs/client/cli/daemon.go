@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"os/signal"
 	"syscall"
@@ -60,11 +61,35 @@ var daemonStartCmd = &cobra.Command{
 				if runOfflineMezonStack == nil {
 					return fmt.Errorf("offline Mezon stack not initialised")
 				}
-				return runOfflineMezonStack(cmd.Context(), runner.RunOpts{
-					Workspace: workspaceDir,
-				})
+				homeDir, _ := os.UserHomeDir()
+
+				runtimeDir := filepath.Join(homeDir, ".mework", "runtime")
+				exePath, _ := os.Executable()
+				binDir := filepath.Dir(exePath)
+				mezonOpts := runner.RunOpts{
+					Workspace:   workspaceDir,
+					ServerBin:   filepath.Join(binDir, "mework-server"),
+					WorkerBin:   filepath.Join(binDir, "mework-mezon-worker"),
+					RuntimeDir:  runtimeDir,
+					KeysDir:     runtimeDir,
+					TokenPath:   filepath.Join(runtimeDir, "runner.token"),
+					ServerLog:   filepath.Join(runtimeDir, "server.log"),
+					WorkerLog:   filepath.Join(runtimeDir, "worker.log"),
+					DatabaseURL: os.Getenv("DATABASE_URL"),
+				}
+				// Start Mezon stack in bg, then listen for CLI agent sends.
+				ctx, cancel := context.WithCancel(cmd.Context())
+				go func() {
+					if err := runOfflineMezonStack(ctx, mezonOpts); err != nil {
+						fmt.Fprintf(os.Stderr, "mezon stack: %v\n", err)
+					}
+					cancel()
+				}()
+				err := runOfflineForeground(ctx, prof)
+				cancel()
+				return err
 			}
-			return runOfflineForeground(prof)
+			return runOfflineForeground(cmd.Context(), prof)
 		}
 		if running, pid := runner.IsRunning(prof); running {
 			fmt.Printf("daemon already running (pid %d)\n", pid)
@@ -251,7 +276,7 @@ func runForeground(prof string) error {
 // runOfflineForeground validates the offline-mode setup and starts the
 // workspace-bound session without hub enrollment or network dependencies.
 // It returns nil when all validations pass and the session is ready.
-func runOfflineForeground(prof string) error {
+func runOfflineForeground(cmdCtx context.Context, prof string) error {
 	if workspaceDir == "" {
 		return fmt.Errorf("--workspace is required in offline mode")
 	}
@@ -282,7 +307,7 @@ func runOfflineForeground(prof string) error {
 
 	// Wire a self-contained in-process session: in-memory broker, local-only
 	// grant, and a file-system definition resolver from the workspace.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(cmdCtx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	broker := memory.New()

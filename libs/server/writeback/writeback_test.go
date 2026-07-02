@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"mework/libs/server/platform/secret"
 	"mework/libs/server/platform/store"
+	"mework/libs/server/provider"
+	"mework/libs/server/provider/mello"
 )
 
 func TestFormatComment(t *testing.T) {
@@ -204,6 +206,10 @@ func TestExecuteWriteBack(t *testing.T) {
 		}
 	}))
 	defer mockMello.Close()
+
+	// Register the real Mello adapter pointed at the mock server so ExecuteWriteBack
+	// can find a registered provider for "mello" and make HTTP calls to it.
+	provider.Register(mello.NewMelloAdapter(mockMello.URL))
 
 	// Execute writeback
 	err = ExecuteWriteBack(ctx, pool, secretKey, jobID)
