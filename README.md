@@ -30,13 +30,12 @@ to `/usr/local/bin` (or `~/.local/bin`).
 
 **Prerequisites:** [Claude Code](https://claude.ai) (`claude` in PATH)
 
-### Offline mode (single binary, no server)
+### Offline mode (SQLite + miniredis, no dependencies)
 
-Run a local agent daemon — no databases, no infrastructure. The headline
-flow combines the offline daemon with a Mezon chat bot: the daemon spawns
-and supervises a small embedded stack (`mework-server` on SQLite +
-`mework-mezon-worker`), so a single `mework daemon start --offline --with-mezon`
-is all you need to message your agent from Mezon.
+Run a local agent daemon — no Postgres, no Redis, no Docker required.
+The daemon spawns and supervises a small embedded stack (`mework-server`
+on SQLite + `mework-mezon-worker` with miniredis), so a single command
+starts everything you need to message your agent from Mezon or the CLI.
 
 ```bash
 # 1. Install
