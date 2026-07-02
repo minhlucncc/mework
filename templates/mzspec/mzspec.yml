@@ -1,0 +1,5 @@
+# Mzspec workspace template — copied from templates/workspace/ with
+# orchestrator-worker delegation model for the mzspec SDLC pipeline.
+#
+# Orchestrator: manages sandboxes, spawns workers, notifies human
+# Worker: runs mzspec pipeline (propose → spec → ship), reports back
