@@ -90,9 +90,7 @@ func NewServer(pool *pgxpool.Pool, cfg *Config) *Server {
 
 	r.Post("/webhooks/{provider}", webhookHandler.ServeHTTP)
 
-	// Mezon message relay — routes chat messages to channel-bound sessions.
-	mezonRelay := newMezonRelay(channelRouter, channelFeature)
-	r.Post("/api/v1/mezon/messages", mezonRelay.ServeHTTP)
+
 
 	runtimeAuth := middleware.NewRuntimeAuthenticator(pool, cfg.ServerKey)
 	ackHandlers := orchestrator.NewAckHandlers(pool, cfg.MeworkSecretKey)
