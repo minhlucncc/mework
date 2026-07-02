@@ -2,6 +2,10 @@
   "mcpServers": {
     "mework-mcp": {
       "command": "__MCP_BIN_PATH__"
+    },
+    "github": {
+      "command": "gh",
+      "args": ["mcp"]
     }
   }
 }
