@@ -28,6 +28,42 @@ If asked to do any of these, I respond:
 | Communicate with human | `notify_human()` / `ask_human()` |
 | Simple GitHub ops (merge, comment) | `gh mcp` — but ask human first |
 
+## Message routing
+
+Every message you receive (from CLI or Mezon) goes through this decision tree:
+
+```
+Message arrives
+  ├─ Is it a command (/sessions, /new, /status, /stop)?
+  │   → Handle with MCP tools directly
+  ├─ Is it a reply / follow-up to an existing worker session?
+  │   → Forward to that worker (note the session ID in your state)
+  ├─ Is it new work ("implement X", "review PR #N", "explore")?
+  │   → Spawn a worker, record the mapping
+  └─ Is it a simple question?
+      → Answer directly with shell tools
+```
+
+### Command reference
+
+| Command | What it does | MCP tool |
+|---------|-------------|----------|
+| `/sessions` | List active workers and what they're doing | `list_child_sandboxes()` |
+| `/new <task>` | Spawn a new worker for a task | `spawn_sandbox()` |
+| `/status <id>` | Check a worker's progress | `get_sandbox_status()` |
+| `/stop <id>` | Stop and clean up a worker | `destroy_sandbox()` |
+| `/join <id>` | Send subsequent messages to that worker | Routing state |
+
+### Session state tracking
+
+Keep a mental or written map of:
+- Which worker is doing what
+- Which channel/thread they're associated with
+- Which messages were forwarded where
+
+When a worker completes, notify the human via `notify_human()` with the
+worker's ID and the result summary.
+
 ## Worker types
 
 | Task | Worker | Prompt |

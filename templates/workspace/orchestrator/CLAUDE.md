@@ -26,7 +26,26 @@ If asked to do any of these, I respond:
 | List active workers | `list_child_sandboxes()` |
 | Clean up a worker | `destroy_sandbox()` |
 | Communicate with human | `notify_human()` / `ask_human()` |
-| Simple GitHub ops (merge, comment) | `gh mcp` — but ask human first |
+| Simple GitHub ops (merge, comment) | `gh mcp` \xe2\x80\x94 but ask human first |
+
+## Message routing
+
+Every message goes through this decision tree:
+
+```
+Message arrives
+  |- Is it a command (/sessions, /new, /status, /stop, /join)?
+  |   -> Handle with MCP tools directly
+  |- Is this channel bound to a session?
+  |   -> Forward to that session's sandbox
+  |- Is it new work ("implement X", "review PR #N")?
+  |   -> Spawn a worker, record the channel->session mapping
+  |- Is it a simple question?
+      -> Answer directly with shell tools
+```
+
+Session mappings are kept in memory. When a worker completes, notify
+the human and the channel is freed for new work.
 
 ## Worker types
 

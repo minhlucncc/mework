@@ -44,6 +44,52 @@ func NewOutboundPoller(cfg *Config) *OutboundPoller {
 	}
 }
 
+// RelayMessage sends a POST /api/v1/mezon/messages to the server.
+// The server routes the message to a channel-bound session if one exists,
+// or falls back to the orchestrator. Returns true if routed to a session.
+func (p *OutboundPoller) RelayMessage(ctx context.Context, channelID, clanID, senderID, text, messageID, botKeyID, botToken string) bool {
+	payload := map[string]string{
+		"channel_id": channelID,
+		"clan_id":    clanID,
+		"sender_id":  senderID,
+		"text":       text,
+		"message_id": messageID,
+		"bot_key_id": botKeyID,
+		"bot_token":  botToken,
+	}
+
+	body, _ := json.Marshal(payload)
+	url := p.cfg.MeworkServerURL + "/api/v1/mezon/messages"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("relay: request error: %v", err)
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.cfg.MeworkToken)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		log.Printf("relay: http error: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("relay: server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return false
+	}
+
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		return result.Status == "routed"
+	}
+	return false
+}
+
 // EnqueueJob sends a POST /api/v1/jobs/enqueue to the server.
 func (p *OutboundPoller) EnqueueJob(ctx context.Context, channelID, senderID, text, messageID string) {
 	payload := map[string]string{
